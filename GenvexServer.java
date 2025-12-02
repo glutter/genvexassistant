@@ -91,7 +91,19 @@ public class GenvexServer {
                         if (!client.isConnected()) client.connect();
                         
                         client.setFanSpeed(level);
-                        sendResponse(t, 200, "{\"success\": true, \"level\": " + level + "}");
+                        
+                        // Wait a moment for the controller to register the change
+                        Thread.sleep(2000);
+                        
+                        // Read back status to confirm command acceptance
+                        int duty = client.readDatapoint(18);
+                        int rpm = client.readDatapoint(35);
+                        
+                        String json = String.format(
+                            "{\"success\": true, \"level\": %d, \"fan_duty\": %d, \"fan_rpm\": %d}",
+                            level, duty / 100, rpm
+                        );
+                        sendResponse(t, 200, json);
                     } catch (NumberFormatException e) {
                         sendResponse(t, 400, "{\"error\": \"Invalid level format\"}");
                     } catch (Exception e) {
