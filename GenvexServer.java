@@ -92,8 +92,8 @@ public class GenvexServer {
                         
                         client.setFanSpeed(level);
                         
-                        // Wait a moment for the controller to register the change
-                        Thread.sleep(2000);
+                        // Wait a moment for the controller to register the change and fan to spin up/down
+                        Thread.sleep(5000);
                         
                         // Read back status to confirm command acceptance
                         int duty = client.readDatapoint(18);
