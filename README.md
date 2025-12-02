@@ -64,6 +64,35 @@ javac ConnectGenvex.java
 java ConnectGenvex
 ```
 
+## Humidity Control & Monitoring
+
+A dedicated background service (`HumidityMonitor`) is available to automate fan speed based on humidity levels and time of day.
+
+### Features
+1.  **Data Logging**: Polls humidity, temperature, and RPM every 30 seconds and stores it in a PostgreSQL database.
+2.  **Boost Mode**: Automatically detects rapid humidity rises (e.g., during a shower) and boosts fan speed to Level 3 for 15 minutes.
+3.  **Night Mode**: Forces fan speed to Level 1 (Low) between 23:00 and 06:30 for quiet operation.
+4.  **General Control**:
+    *   **> 60% Humidity**: Speed 3 (High)
+    *   **< 30% Humidity**: Speed 1 (Low)
+    *   **Normal**: Speed 2
+
+### Setup
+1.  **Database**: Ensure a PostgreSQL database named `genvex` exists.
+    ```bash
+    # Create database
+    createdb genvex
+    
+    # Apply schema
+    psql -d genvex -f schema.sql
+    ```
+
+2.  **Run Monitor**:
+    ```bash
+    ./start_monitor.sh [DB_USER] [DB_PASSWORD]
+    ```
+    *Example:* `./start_monitor.sh postgres 123456`
+
 ## Current Status
 - [x] Connection Handshake
 - [x] PING Command
