@@ -20,14 +20,7 @@ See `notes.txt` for detailed protocol findings.
 
 ## Known Datapoints (Optima 270)
 
-| Name | Read Addr | Write Addr | Notes |
-|------|-----------|------------|-------|
-| Temp Supply | 20 | - | Divider 10, Offset -300? |
-| Fan Speed | 7 | 24 | 0 = Speed 1 (Low) |
-| Duty Cycle Supply | 18 | - | Divider 100 |
-| Duty Cycle Extract | 19 | - | Divider 100 |
-| RPM Supply | 35 | - | |
-| RPM Extract | 36 | - | |
+See [ADDRESS_MAP.md](ADDRESS_MAP.md) for the complete and verified list of addresses.
 
 ## Usage
 

@@ -93,37 +93,69 @@ public class ConnectGenvex {
             }
             
             if (connected) {
-                System.out.println("Connected! Sending DATAPOINT_READ (Seq " + nextSeq + ")...");
+                System.out.println("Connected! Reading System Status...");
                 
-                // Build Datapoint Read Command
-                ByteBuffer cmdBuffer = ByteBuffer.allocate(4 + 2 + 1 + 4 + 1);
-                cmdBuffer.putInt(0x0000002d);
-                cmdBuffer.putShort((short) 1);
-                cmdBuffer.put((byte) 0);
-                cmdBuffer.putInt(20);
-                cmdBuffer.put((byte) 1);
-                byte[] dpCmd = cmdBuffer.array();
+                // Read interesting datapoints
+                int tempSupply = readDatapoint(socket, address, clientId, newServerId, nextSeq++, 20);
+                int tempOutside = readDatapoint(socket, address, clientId, newServerId, nextSeq++, 21);
+                int humidity = readDatapoint(socket, address, clientId, newServerId, nextSeq++, 26);
+                int dutySupply = readDatapoint(socket, address, clientId, newServerId, nextSeq++, 18);
+                int rpmSupply = readDatapoint(socket, address, clientId, newServerId, nextSeq++, 35);
+                int fanSpeedRead = readDatapoint(socket, address, clientId, newServerId, nextSeq++, 7); // Known to be 0
                 
-                byte[] dpResponse = sendPacketAndWaitForResponse(socket, address, clientId, newServerId, nextSeq, dpCmd, 3);
+                System.out.println("--- Status ---");
+                System.out.println("Temp Supply: " + (tempSupply / 10.0) + " C");
+                System.out.println("Temp Outside: " + (tempOutside / 10.0) + " C");
+                System.out.println("Humidity: " + humidity + " %");
+                System.out.println("Fan Speed (Duty): " + (dutySupply / 100) + " %");
+                System.out.println("Fan RPM: " + rpmSupply);
+                System.out.println("Fan Speed Setpoint (Addr 7): " + fanSpeedRead + " (Note: This register seems inactive)");
+                System.out.println("----------------");
                 
-                if (dpResponse != null) {
-                    System.out.println("Got DATAPOINT response!");
-                    System.out.println("Payload Data: " + bytesToHex(dpResponse));
-                    // Parse value
-                    // Response format: Length(2) + Value(2) + ...
-                    if (dpResponse.length >= 4) {
-                        int val = ((dpResponse[2] & 0xFF) << 8) | (dpResponse[3] & 0xFF);
-                        // Signed short?
-                        short sVal = (short)val;
-                        System.out.println("Raw Value: " + sVal);
-                        System.out.println("Temp Supply: " + (sVal / 10.0) + " C"); 
-                    }
-                }
+                // Example of how to change speed:
+                // writeSetpoint(socket, address, clientId, newServerId, nextSeq++, 24, 2); // Set Speed 2
             }
         } finally {
             socket.close();
             System.out.println("Socket closed.");
         }
+    }
+    
+    private static int readDatapoint(DatagramSocket socket, InetAddress address, byte[] clientId, byte[] serverId, int seq, int addr) throws IOException, InterruptedException {
+        byte[] cmd = buildDatapointReadCommand(addr);
+        byte[] response = sendPacketAndWaitForResponse(socket, address, clientId, serverId, seq, cmd, 3);
+        if (response != null && response.length >= 4) {
+            return ((response[2] & 0xFF) << 8) | (response[3] & 0xFF);
+        }
+        return -1;
+    }
+    
+    private static byte[] buildDatapointReadCommand(int address) {
+        ByteBuffer cmdBuffer = ByteBuffer.allocate(4 + 2 + 1 + 4 + 1);
+        cmdBuffer.putInt(0x0000002d); // DATAPOINT_READ
+        cmdBuffer.putShort((short) 1); // Count
+        cmdBuffer.put((byte) 0);       // Obj
+        cmdBuffer.putInt(address);     // Address
+        cmdBuffer.put((byte) 1);       // Terminator
+        return cmdBuffer.array();
+    }
+
+    private static byte[] buildSetpointWriteCommand(int address, int value) {
+        // Command: 00 00 00 2b (SETPOINT_WRITELIST)
+        // Count: 00 01
+        // Item: Obj(1) + Addr(4) + Value(2)
+        // Terminator: 01
+        
+        ByteBuffer cmdBuffer = ByteBuffer.allocate(4 + 2 + 1 + 4 + 2 + 1);
+        cmdBuffer.putInt(0x0000002b); // SETPOINT_WRITELIST
+        cmdBuffer.putShort((short) 1); // Count
+        
+        cmdBuffer.put((byte) 0);       // Obj
+        cmdBuffer.putInt(address);     // Address
+        cmdBuffer.putShort((short) value); // Value
+        
+        cmdBuffer.put((byte) 1);       // Terminator
+        return cmdBuffer.array();
     }
     
     private static byte[] sendPacketAndWaitForResponse(DatagramSocket socket, InetAddress address, byte[] clientId, byte[] serverId, int sequenceId, byte[] payloadData, int retries) throws IOException, InterruptedException {
