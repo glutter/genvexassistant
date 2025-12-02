@@ -9,6 +9,10 @@ This project implements a reverse-engineered client for the Genvex Connect syste
 - Reading sensor values (Datapoints).
 - Handling the specific "Notification before Response" behavior of the device.
 
+## Dashboard Demo
+
+![Dashboard Demo](demo_image.png)
+
 ## Protocol Details
 
 The communication uses UDP on port 5570.
