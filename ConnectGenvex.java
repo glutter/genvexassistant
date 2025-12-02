@@ -11,6 +11,7 @@ public class ConnectGenvex {
 
     private static final String TARGET_IP = "192.168.1.100";
     private static final int TARGET_PORT = 5570;
+    // NOTE: You must use a valid email address registered with the device (e.g., via the official app)
     private static final String EMAIL = "user@example.com";
 
     private static final byte U_CONNECT = (byte) 0x83;
