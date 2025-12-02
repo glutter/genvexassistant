@@ -27,7 +27,38 @@ See [ADDRESS_MAP.md](ADDRESS_MAP.md) for the complete and verified list of addre
 ### Prerequisites
 - Java Development Kit (JDK) 8 or higher.
 
-### Compile and Run
+### Run the Local API Server
+This project includes a local HTTP server to control the fan speed and read status.
+
+1. Start the server:
+   ```bash
+   ./start_server.sh
+   ```
+   The server will listen on `http://localhost:8080`.
+
+2. **Get Status** (JSON):
+   ```bash
+   curl http://localhost:8080/status
+   ```
+   Response:
+   ```json
+   {
+     "temp_supply": 21.5,
+     "temp_outside": 10.2,
+     "humidity": 45,
+     "fan_duty": 30,
+     "fan_rpm": 1050
+   }
+   ```
+
+3. **Set Fan Speed**:
+   ```bash
+   # Set to Speed 2 (0=Off, 1=Low, 2=Medium, 3=High, 4=Max)
+   curl -X POST "http://localhost:8080/speed?level=2"
+   ```
+
+### Run the CLI Tool
+To run the standalone CLI tool for testing:
 ```bash
 javac ConnectGenvex.java
 java ConnectGenvex
@@ -37,8 +68,9 @@ java ConnectGenvex
 - [x] Connection Handshake
 - [x] PING Command
 - [x] Reading Datapoints (e.g., Temperature Supply)
-- [ ] Writing Setpoints
-- [ ] Full Datapoint Mapping
+- [x] Writing Setpoints (Fan Speed Control)
+- [x] Local HTTP API
+- [x] Full Datapoint Mapping
 
 ## Disclaimer
 This software is based on reverse engineering and is not affiliated with Genvex or Nabto. Use at your own risk.

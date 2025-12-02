@@ -113,7 +113,8 @@ public class ConnectGenvex {
                 System.out.println("----------------");
                 
                 // Example of how to change speed:
-                // writeSetpoint(socket, address, clientId, newServerId, nextSeq++, 24, 2); // Set Speed 2
+                // byte[] setSpeed2 = buildSetpointWriteCommand(24, 2);
+                // sendPacketAndWaitForResponse(socket, address, clientId, newServerId, nextSeq++, setSpeed2, 3);
             }
         } finally {
             socket.close();
