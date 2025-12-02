@@ -4,7 +4,6 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.Arrays;
 import java.util.Random;
 
@@ -28,7 +27,7 @@ public class ConnectGenvex {
         }
     }
 
-    private static void connect() throws IOException {
+    private static void connect() throws IOException, InterruptedException {
         DatagramSocket socket = new DatagramSocket();
         socket.setSoTimeout(5000);
 
@@ -68,92 +67,56 @@ public class ConnectGenvex {
             System.out.println("Extracted Server ID: " + bytesToHex(newServerId));
 
             int nextSeq = 0;
-            // Send PING loop
+            // Send PING
             boolean connected = false;
-            for (int i = 1; i <= 5; i++) {
-                System.out.println("Sending PING (Seq " + i + ")...");
-                byte[] pingCmd = buildPingCommand();
-                sendPacket(socket, address, clientId, newServerId, i, pingCmd);
-                
-                try {
-                    socket.receive(responsePacket);
-                    responseData = Arrays.copyOf(responsePacket.getData(), responsePacket.getLength());
-                    System.out.println("Received packet: " + bytesToHex(responseData));
-                    
-                    if (responseData.length > 16 && responseData[8] == U_DATA) {
-                         byte payloadType = responseData[16];
-                         if (payloadType == U_CRYPT) {
-                             System.out.println("Got CRYPT payload! SUCCESS!");
-                             
-                             if (responseData.length >= 22) {
-                                 byte[] payloadData = Arrays.copyOfRange(responseData, 22, responseData.length);
-                                 // Remove padding if necessary (last byte is 0x02)
-                                 
-                                 // PING response starts with "pong" (4 bytes)
-                                 if (payloadData.length >= 24) {
-                                     long deviceNumber = readUnsignedInt(payloadData, 4);
-                                     long deviceModel = readUnsignedInt(payloadData, 8);
-                                     long slaveDeviceNumber = readUnsignedInt(payloadData, 16);
-                                     long slaveDeviceModel = readUnsignedInt(payloadData, 20);
+            byte[] pingCmd = buildPingCommand();
+            // Try Sequence ID 1, 3 retries
+            byte[] pingResponse = sendPacketAndWaitForResponse(socket, address, clientId, newServerId, 1, pingCmd, 3);
+            
+            if (pingResponse != null) {
+                 // PING response starts with "pong" (4 bytes)
+                 if (pingResponse.length >= 24) {
+                     long deviceNumber = readUnsignedInt(pingResponse, 4);
+                     long deviceModel = readUnsignedInt(pingResponse, 8);
+                     long slaveDeviceNumber = readUnsignedInt(pingResponse, 16);
+                     long slaveDeviceModel = readUnsignedInt(pingResponse, 20);
 
-                                     System.out.println("Device Number: " + deviceNumber);
-                                     System.out.println("Device Model: " + deviceModel);
-                                     System.out.println("Slave Device Number: " + slaveDeviceNumber);
-                                     System.out.println("Slave Device Model: " + slaveDeviceModel);
-                                     
-                                     connected = true;
-                                     nextSeq = i + 1;
-                                     break;
-                                 }
-                             }
-                         } else if (payloadType == (byte)0x34) {
-                             System.out.println("Got NOTIFY payload. Data: " + bytesToHex(Arrays.copyOfRange(responseData, 20, responseData.length)));
-                         }
-                    }
-                } catch (SocketTimeoutException e) {
-                    System.out.println("Timeout waiting for response to Seq " + i);
-                }
-                
-                try {
-                    Thread.sleep(1000);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
+                     System.out.println("Device Number: " + deviceNumber);
+                     System.out.println("Device Model: " + deviceModel);
+                     System.out.println("Slave Device Number: " + slaveDeviceNumber);
+                     System.out.println("Slave Device Model: " + slaveDeviceModel);
+                     
+                     connected = true;
+                     nextSeq = 2;
+                 }
             }
             
             if (connected) {
                 System.out.println("Connected! Sending DATAPOINT_READ (Seq " + nextSeq + ")...");
-                // Send DATAPOINT_READ for Temp Supply (Addr 20)
-                sendDatapointRead(socket, address, clientId, newServerId, nextSeq);
                 
-                try {
-                    socket.receive(responsePacket);
-                    responseData = Arrays.copyOf(responsePacket.getData(), responsePacket.getLength());
-                    System.out.println("Received packet: " + bytesToHex(responseData));
-                    
-                    if (responseData.length > 16 && responseData[8] == U_DATA) {
-                        byte payloadType = responseData[16];
-                        if (payloadType == U_CRYPT) {
-                            System.out.println("Got DATAPOINT response!");
-                            byte[] payloadData = Arrays.copyOfRange(responseData, 22, responseData.length);
-                            System.out.println("Payload Data: " + bytesToHex(payloadData));
-                            // Parse value
-                            // Response format: Length(2) + Value(2) + ...
-                            if (payloadData.length >= 4) {
-                                int val = ((payloadData[2] & 0xFF) << 8) | (payloadData[3] & 0xFF);
-                                // Signed short?
-                                short sVal = (short)val;
-                                System.out.println("Raw Value: " + sVal);
-                                System.out.println("Temp Supply: " + (sVal / 10.0) + " C"); // Divider 10, Offset -300?
-                                // Wait, Optima270 says offset -300.
-                                // Let's check model definition.
-                            }
-                        } else if (payloadType == (byte)0x34) {
-                             System.out.println("Got NOTIFY payload. Data: " + bytesToHex(Arrays.copyOfRange(responseData, 20, responseData.length)));
-                        }
+                // Build Datapoint Read Command
+                ByteBuffer cmdBuffer = ByteBuffer.allocate(4 + 2 + 1 + 4 + 1);
+                cmdBuffer.putInt(0x0000002d);
+                cmdBuffer.putShort((short) 1);
+                cmdBuffer.put((byte) 0);
+                cmdBuffer.putInt(20);
+                cmdBuffer.put((byte) 1);
+                byte[] dpCmd = cmdBuffer.array();
+                
+                byte[] dpResponse = sendPacketAndWaitForResponse(socket, address, clientId, newServerId, nextSeq, dpCmd, 3);
+                
+                if (dpResponse != null) {
+                    System.out.println("Got DATAPOINT response!");
+                    System.out.println("Payload Data: " + bytesToHex(dpResponse));
+                    // Parse value
+                    // Response format: Length(2) + Value(2) + ...
+                    if (dpResponse.length >= 4) {
+                        int val = ((dpResponse[2] & 0xFF) << 8) | (dpResponse[3] & 0xFF);
+                        // Signed short?
+                        short sVal = (short)val;
+                        System.out.println("Raw Value: " + sVal);
+                        System.out.println("Temp Supply: " + (sVal / 10.0) + " C"); 
                     }
-                } catch (SocketTimeoutException e) {
-                    System.out.println("Timeout waiting for DATAPOINT response");
                 }
             }
         } finally {
@@ -162,7 +125,7 @@ public class ConnectGenvex {
         }
     }
     
-    private static void sendPacket(DatagramSocket socket, InetAddress address, byte[] clientId, byte[] serverId, int sequenceId, byte[] payloadData) throws IOException {
+    private static byte[] sendPacketAndWaitForResponse(DatagramSocket socket, InetAddress address, byte[] clientId, byte[] serverId, int sequenceId, byte[] payloadData, int retries) throws IOException, InterruptedException {
         byte[] cryptPayload = buildCryptPayload(payloadData);
         
         int packetLength = 16 + cryptPayload.length + 2;
@@ -188,89 +151,42 @@ public class ConnectGenvex {
         buffer.putShort(packetLength - 2, (short) (sum & 0xFFFF));
         
         byte[] finalPacket = buffer.array();
-        System.out.println("Sending Packet: " + bytesToHex(finalPacket));
-        
         DatagramPacket packet = new DatagramPacket(finalPacket, finalPacket.length, address, TARGET_PORT);
-        socket.send(packet);
-    }
-
-    private static void sendDatapointRead(DatagramSocket socket, InetAddress address, byte[] clientId, byte[] serverId, int sequenceId) throws IOException {
-        // Command: 00 00 00 2d
-        // Count: 00 01
-        // Item: 00 (Obj) + 00 00 00 14 (Addr 20)
-        // Terminator: 01
         
-        ByteBuffer cmdBuffer = ByteBuffer.allocate(4 + 2 + 1 + 4 + 1);
-        cmdBuffer.putInt(0x0000002d);
-        cmdBuffer.putShort((short) 1);
-        cmdBuffer.put((byte) 0);
-        cmdBuffer.putInt(20);
-        cmdBuffer.put((byte) 1);
+        byte[] receiveBuffer = new byte[1024];
+        DatagramPacket responsePacket = new DatagramPacket(receiveBuffer, receiveBuffer.length);
         
-        byte[] cmd = cmdBuffer.array();
-        byte[] cryptPayload = buildCryptPayload(cmd);
-        
-        // Packet Length: Header(16) + Payload + Checksum(2)
-        int packetLength = 16 + cryptPayload.length + 2;
-        
-        ByteBuffer buffer = ByteBuffer.allocate(packetLength);
-        buffer.put(clientId);
-        buffer.put(serverId);
-        buffer.put(U_DATA);
-        buffer.put((byte) 0x02); // Version
-        buffer.put((byte) 0x00); // Retransmission
-        buffer.put((byte) 0x00); // Flags (0 for normal data)
-        buffer.putShort((short) sequenceId);
-        buffer.putShort((short) packetLength);
-        
-        buffer.put(cryptPayload);
-        
-        // Checksum
-        byte[] packetBytes = buffer.array();
-        int sum = 0;
-        for (int i = 0; i < packetBytes.length - 2; i++) {
-            sum += (packetBytes[i] & 0xFF);
+        for (int i = 0; i < retries; i++) {
+            System.out.println("Sending Packet (Seq " + sequenceId + ", Attempt " + (i+1) + "): " + bytesToHex(finalPacket));
+            socket.send(packet);
+            
+            try {
+                // Try to receive multiple times in case of NOTIFY packets
+                long startTime = System.currentTimeMillis();
+                while (System.currentTimeMillis() - startTime < 2000) { // 2 second window per attempt
+                    socket.receive(responsePacket);
+                    byte[] responseData = Arrays.copyOf(responsePacket.getData(), responsePacket.getLength());
+                    System.out.println("Received packet: " + bytesToHex(responseData));
+                    
+                    if (responseData.length > 16 && responseData[8] == U_DATA) {
+                         byte payloadType = responseData[16];
+                         if (payloadType == U_CRYPT) {
+                             System.out.println("Got CRYPT payload!");
+                             if (responseData.length >= 22) {
+                                 return Arrays.copyOfRange(responseData, 22, responseData.length);
+                             }
+                         } else if (payloadType == (byte)0x34) {
+                             System.out.println("Got NOTIFY payload. Ignoring...");
+                         }
+                    }
+                }
+            } catch (SocketTimeoutException e) {
+                System.out.println("Timeout waiting for response.");
+            }
+            
+            Thread.sleep(1000);
         }
-        buffer.putShort(packetLength - 2, (short) (sum & 0xFFFF));
-        
-        DatagramPacket packet = new DatagramPacket(packetBytes, packetBytes.length, address, TARGET_PORT);
-        socket.send(packet);
-    }
-    
-    private static void sendKeepAlive(DatagramSocket socket, InetAddress address, byte[] clientId, byte[] serverId, int sequenceId) throws IOException {
-        // Command: 00 00 00 02
-        byte[] cmd = new byte[]{0, 0, 0, 2};
-        byte[] cryptPayload = buildCryptPayload(cmd);
-        
-        // Packet Length: Header(16) + Tag(2) + Payload + Checksum(2)
-        int packetLength = 16 + 2 + cryptPayload.length + 2;
-        
-        ByteBuffer buffer = ByteBuffer.allocate(packetLength);
-        buffer.put(clientId);
-        buffer.put(serverId);
-        buffer.put(U_DATA);
-        buffer.put((byte) 0x02); // Version
-        buffer.put((byte) 0x00); // Retransmission
-        buffer.put((byte) 0x40); // Flags
-        buffer.putShort((short) sequenceId);
-        buffer.putShort((short) packetLength);
-        
-        buffer.putShort((short) 0x0003); // Frame Control Tag
-        buffer.put(cryptPayload);
-        
-        // Checksum
-        byte[] packetBytes = buffer.array();
-        int sum = 0;
-        for (int i = 0; i < packetBytes.length - 2; i++) {
-            sum += (packetBytes[i] & 0xFF);
-        }
-        buffer.putShort(packetLength - 2, (short) (sum & 0xFFFF));
-        
-        byte[] finalPacket = buffer.array();
-        System.out.println("Sending KEEP_ALIVE Packet: " + bytesToHex(finalPacket));
-        
-        DatagramPacket packet = new DatagramPacket(finalPacket, finalPacket.length, address, TARGET_PORT);
-        socket.send(packet);
+        return null;
     }
 
     private static byte[] buildIpxPayload() {
