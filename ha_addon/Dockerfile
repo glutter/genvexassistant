@@ -6,7 +6,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y jq && rm -rf /var/lib/apt/lists/*
 
 # Copy the built jar file
-COPY genvex-integration-1.0-SNAPSHOT.jar /app/app.jar
+COPY app.jar /app/app.jar
 COPY run.sh /app/run.sh
 
 RUN chmod +x /app/run.sh
