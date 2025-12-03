@@ -29,7 +29,9 @@ Ensure you create the `genvex` database and the `humidity_readings` table. You c
 
 ## Dashboard
 
-Once running, you can access the dashboard by clicking "OPEN WEB UI" or navigating to `http://<HA_IP>:8081`.
+Once running, you can access the dashboard by clicking **OPEN WEB UI** in the add-on page (via Home Assistant Ingress).
+
+You can also access it directly at `http://<HA_IP>:8081` if you have mapped the port in the configuration.
 
 ## Adding to Home Assistant Overview
 

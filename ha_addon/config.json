@@ -1,13 +1,14 @@
 {
   "name": "Genvex Humidity Monitor",
-  "version": "1.3",
+  "version": "1.4",
   "slug": "genvex_monitor",
   "description": "Java-based Genvex Ventilation Control and Monitoring",
   "url": "https://github.com/lutherh/genvexassistant",
   "startup": "application",
   "arch": ["aarch64", "amd64", "armv7"],
   "homeassistant_api": true,
-  "webui": "http://[HOST]:[PORT:8081]",
+  "ingress": true,
+  "ingress_port": 8081,
   "ports": {
     "8081/tcp": 8081
   },
