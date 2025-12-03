@@ -24,4 +24,4 @@ echo "  DB Host: $DB_HOST"
 echo "  DB User: $DB_USER"
 
 # Start the Java application
-exec java -jar /app/app.jar
+exec java -Djava.net.preferIPv4Stack=true -jar /app/app.jar

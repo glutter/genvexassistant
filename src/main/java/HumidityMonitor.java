@@ -19,8 +19,6 @@ import java.util.concurrent.TimeUnit;
 
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpHandler;
-import com.sun.net.httpserver.HttpServer;
-import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpExchange;
 import java.net.InetSocketAddress;
 import java.net.HttpURLConnection;
