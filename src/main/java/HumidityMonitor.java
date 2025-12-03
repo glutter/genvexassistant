@@ -320,7 +320,7 @@ public class HumidityMonitor {
             boolean isNight = now.isAfter(NIGHT_START) || now.isBefore(NIGHT_END);
 
             if (isNight) {
-                targetSpeed = 0; // Night Mode
+                targetSpeed = 1; // Night Mode (Lowest speed)
             } else {
                 // General Humidity Control
                 if (humidity >= HUMIDITY_HIGH_THRESHOLD) {
