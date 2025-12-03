@@ -55,6 +55,7 @@ public class HumidityMonitor {
     private boolean boostActive = false;
     private long boostEndTime = 0;
     private int currentFanSpeed = -1;
+    private int dbErrorCount = 0;
 
     public HumidityMonitor(String ip, String email) {
         this.client = new GenvexClient(ip, email);
@@ -347,10 +348,20 @@ public class HumidityMonitor {
             pstmt.setDouble(2, tempSupply);
             pstmt.setInt(3, rpm);
             pstmt.executeUpdate();
+            
+            if (dbErrorCount > 0) {
+                log("Database connection restored.");
+                dbErrorCount = 0;
+            }
             return true;
 
         } catch (SQLException e) {
-            logError("Database error: " + e.getMessage());
+            dbErrorCount++;
+            if (dbErrorCount <= 5) {
+                logError("Database error: " + e.getMessage());
+            } else if (dbErrorCount == 6) {
+                logError("Database error: " + e.getMessage() + " (Suppressing further DB errors)");
+            }
             return false;
         }
     }
