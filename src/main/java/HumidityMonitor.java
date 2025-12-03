@@ -161,14 +161,11 @@ public class HumidityMonitor {
                     ));
                 }
 
-            } catch (SQLException e) {
-                e.printStackTrace();
-                String error = "{\"error\":\"" + e.getMessage() + "\"}";
-                t.sendResponseHeaders(500, error.length());
-                try (OutputStream os = t.getResponseBody()) {
-                    os.write(error.getBytes());
-                }
-                return;
+            } catch (Exception e) {
+                // Log the error but return empty list so the dashboard doesn't break
+                System.err.println("[HistoryApiHandler] Database error: " + e.getMessage());
+                // If we want to return an empty list, we just continue.
+                // The json StringBuilder already has "["
             }
 
             json.append("]");
