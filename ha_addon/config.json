@@ -6,6 +6,7 @@
   "url": "https://github.com/lutherh/genvexassistant",
   "startup": "application",
   "arch": ["aarch64", "amd64", "armv7"],
+  "homeassistant_api": true,
   "webui": "http://[HOST]:[PORT:8081]",
   "ports": {
     "8081/tcp": 8081

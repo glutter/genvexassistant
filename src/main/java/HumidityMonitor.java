@@ -19,8 +19,12 @@ import java.util.concurrent.TimeUnit;
 
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpExchange;
 import java.net.InetSocketAddress;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
 public class HumidityMonitor {
 
@@ -205,11 +209,60 @@ public class HumidityMonitor {
             } else {
                 log("Read (Not Logged): Humidity=" + humidity + "%, Temp=" + tempSupply + "C, RPM=" + rpm + (boostActive ? " [BOOST ACTIVE]" : ""));
             }
+            
+            // Update Home Assistant
+            updateHomeAssistant(humidity, tempSupply, rpm, currentFanSpeed);
 
         } catch (Exception e) {
             logError("Error polling data: " + e.getMessage());
             // Try to reconnect next time
             client.disconnect();
+        }
+    }
+
+    private void updateHomeAssistant(int humidity, double temp, int rpm, int speed) {
+        String token = System.getenv("SUPERVISOR_TOKEN");
+        if (token == null) return;
+
+        sendToHA("sensor.genvex_humidity", String.valueOf(humidity), "%", "humidity", token);
+        sendToHA("sensor.genvex_temp_supply", String.format("%.1f", temp), "°C", "temperature", token);
+        sendToHA("sensor.genvex_fan_rpm", String.valueOf(rpm), "rpm", null, token);
+        sendToHA("sensor.genvex_fan_speed", String.valueOf(speed), null, null, token);
+    }
+
+    private void sendToHA(String entityId, String state, String unit, String deviceClass, String token) {
+        try {
+            URL url = new URL("http://supervisor/core/api/states/" + entityId);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Authorization", "Bearer " + token);
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setDoOutput(true);
+
+            StringBuilder json = new StringBuilder();
+            json.append("{");
+            json.append("\"state\": \"").append(state).append("\",");
+            json.append("\"attributes\": {");
+            json.append("\"friendly_name\": \"").append(entityId.replace("sensor.genvex_", "").replace("_", " ")).append("\"");
+            if (unit != null) {
+                json.append(", \"unit_of_measurement\": \"").append(unit).append("\"");
+            }
+            if (deviceClass != null) {
+                json.append(", \"device_class\": \"").append(deviceClass).append("\"");
+            }
+            json.append("}");
+            json.append("}");
+
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(json.toString().getBytes("UTF-8"));
+            }
+            
+            int code = conn.getResponseCode();
+            if (code >= 400) {
+                logError("Failed to update HA entity " + entityId + ": HTTP " + code);
+            }
+        } catch (Exception e) {
+            logError("Failed to update HA: " + e.getMessage());
         }
     }
 
