@@ -24,7 +24,10 @@ import java.net.InetSocketAddress;
 
 public class HumidityMonitor {
 
-    private static final String DB_URL = "jdbc:postgresql://localhost:5432/genvex";
+    private static final String DB_HOST = System.getenv().getOrDefault("DB_HOST", "localhost");
+    private static final String DB_PORT = System.getenv().getOrDefault("DB_PORT", "5432");
+    private static final String DB_NAME = System.getenv().getOrDefault("DB_NAME", "genvex");
+    private static final String DB_URL = "jdbc:postgresql://" + DB_HOST + ":" + DB_PORT + "/" + DB_NAME;
     private static final String DB_USER = System.getenv().getOrDefault("DB_USER", "postgres");
     private static final String DB_PASSWORD = System.getenv().getOrDefault("DB_PASSWORD", "123456");
     private static final int WEB_PORT = 8081; // Different from GenvexServer 8080
@@ -220,7 +223,7 @@ public class HumidityMonitor {
             boolean isNight = now.isAfter(NIGHT_START) || now.isBefore(NIGHT_END);
 
             if (isNight) {
-                targetSpeed = 1; // Night Mode
+                targetSpeed = 0; // Night Mode
             } else {
                 // General Humidity Control
                 if (humidity >= HUMIDITY_HIGH_THRESHOLD) {
@@ -322,7 +325,10 @@ public class HumidityMonitor {
 
     public static void main(String[] args) {
         // Example usage
-        HumidityMonitor monitor = new HumidityMonitor("192.168.1.100", "user@example.com");
+        String ip = System.getenv().getOrDefault("GENVEX_IP", "192.168.1.100");
+        String email = System.getenv().getOrDefault("GENVEX_EMAIL", "user@example.com");
+        
+        HumidityMonitor monitor = new HumidityMonitor(ip, email);
         monitor.start();
     }
 }
