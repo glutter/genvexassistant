@@ -30,3 +30,20 @@ Ensure you create the `genvex` database and the `humidity_readings` table. You c
 ## Dashboard
 
 Once running, you can access the dashboard by clicking "OPEN WEB UI" or navigating to `http://<HA_IP>:8081`.
+
+## Adding to Home Assistant Overview
+
+You can embed the custom dashboard directly into your Home Assistant Overview using a **Webpage Card**.
+
+1. Go to your Dashboard and click **Edit Dashboard** (pencil icon).
+2. Click **Add Card**.
+3. Search for and select **Webpage**.
+4. In the **URL** field, enter: `http://<YOUR_HA_IP>:8081` (e.g., `http://192.168.0.100:8081`).
+5. Set the **Aspect Ratio** to something like `75%` or `100%` to fit the graph.
+6. Click **Save**.
+
+Alternatively, since version 1.3+, the add-on exports sensors to Home Assistant. You can use the standard **History Graph** card with these entities:
+- `sensor.genvex_humidity`
+- `sensor.genvex_temp_supply`
+- `sensor.genvex_fan_rpm`
+
