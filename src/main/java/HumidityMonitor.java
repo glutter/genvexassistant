@@ -113,6 +113,14 @@ public class HumidityMonitor {
                     os.write(response.getBytes());
                 }
             } else {
+                if (path.endsWith(".html")) {
+                    t.getResponseHeaders().add("Content-Type", "text/html");
+                } else if (path.endsWith(".js")) {
+                    t.getResponseHeaders().add("Content-Type", "application/javascript");
+                } else if (path.endsWith(".css")) {
+                    t.getResponseHeaders().add("Content-Type", "text/css");
+                }
+                
                 t.sendResponseHeaders(200, 0);
                 try (OutputStream os = t.getResponseBody()) {
                     byte[] buffer = new byte[1024];
