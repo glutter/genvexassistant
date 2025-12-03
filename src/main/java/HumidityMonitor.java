@@ -350,8 +350,15 @@ public class HumidityMonitor {
         if (!boostActive) {
             // Check for rapid rise
             if ((currentHumidity - lastHumidity) >= HUMIDITY_RISE_THRESHOLD) {
-                log("Rapid humidity rise detected (" + lastHumidity + "% -> " + currentHumidity + "%). Activating Boost.");
-                activateBoost();
+                LocalTime now = LocalTime.now();
+                boolean isNight = now.isAfter(NIGHT_START) || now.isBefore(NIGHT_END);
+
+                if (isNight) {
+                    log("Rapid humidity rise detected, but Boost is disabled at night.");
+                } else {
+                    log("Rapid humidity rise detected (" + lastHumidity + "% -> " + currentHumidity + "%). Activating Boost.");
+                    activateBoost();
+                }
             }
         } else {
             // Check if we should deactivate
