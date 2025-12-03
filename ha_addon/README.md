@@ -18,14 +18,12 @@ Before starting, configure the add-on in the **Configuration** tab:
 
 - `genvex_ip`: The IP address of your Genvex unit.
 - `genvex_email`: The email used for the Genvex connection (password).
-- `db_host`: The hostname of your PostgreSQL database. If using the official HA Postgres add-on, this is usually `core-postgresql` or the IP of the container.
-- `db_user`: Database username.
-- `db_password`: Database password.
+- `boost_enabled`: Enable/Disable automatic fan boost on humidity rise.
 
-## Database Setup
+## Database
 
-This add-on requires a PostgreSQL database. You can install the **PostgreSQL** add-on from the official store.
-Ensure you create the `genvex` database and the `humidity_readings` table. You can use the `schema.sql` file provided in the repository to create the table.
+This add-on uses an internal SQLite database to store history. No external database configuration is required.
+The database is stored in `/data/genvex.db` and persists across restarts.
 
 ## Dashboard
 

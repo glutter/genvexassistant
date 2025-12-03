@@ -26,12 +26,11 @@ import java.net.URL;
 
 public class HumidityMonitor {
 
-    private static final String DB_HOST = System.getenv().getOrDefault("DB_HOST", "localhost");
-    private static final String DB_PORT = System.getenv().getOrDefault("DB_PORT", "5432");
-    private static final String DB_NAME = System.getenv().getOrDefault("DB_NAME", "genvex");
-    private static final String DB_URL = "jdbc:postgresql://" + DB_HOST + ":" + DB_PORT + "/" + DB_NAME;
-    private static final String DB_USER = System.getenv().getOrDefault("DB_USER", "postgres");
-    private static final String DB_PASSWORD = System.getenv().getOrDefault("DB_PASSWORD", "123456");
+    // Database Configuration (SQLite)
+    // Use /data/genvex.db if running in Home Assistant (persistent), otherwise local file
+    private static final String DB_PATH = System.getenv().containsKey("SUPERVISOR_TOKEN") ? "/data/genvex.db" : "genvex.db";
+    private static final String DB_URL = "jdbc:sqlite:" + DB_PATH;
+    
     private static final int WEB_PORT = 8081; // Different from GenvexServer 8080
 
     private final GenvexClient client;
@@ -64,6 +63,9 @@ public class HumidityMonitor {
     }
 
     public void start() {
+        // Initialize Database
+        initializeDatabase();
+
         // Start Web Server
         startWebServer();
 
@@ -74,6 +76,22 @@ public class HumidityMonitor {
         scheduler.scheduleAtFixedRate(this::cleanupOldData, 1, 24, TimeUnit.HOURS);
         
         System.out.println("Humidity Monitor started.");
+    }
+
+    private void initializeDatabase() {
+        String sql = "CREATE TABLE IF NOT EXISTS humidity_readings (" +
+                     "timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, " +
+                     "humidity INTEGER, " +
+                     "temp_supply REAL, " +
+                     "fan_rpm INTEGER)";
+        
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             Statement stmt = conn.createStatement()) {
+            stmt.execute(sql);
+            log("Database initialized at " + DB_PATH);
+        } catch (SQLException e) {
+            logError("Failed to initialize database: " + e.getMessage());
+        }
     }
 
     private void startWebServer() {
@@ -162,7 +180,7 @@ public class HumidityMonitor {
             StringBuilder json = new StringBuilder("[");
             String sql = "SELECT timestamp, humidity, temp_supply, fan_rpm FROM humidity_readings ORDER BY timestamp DESC LIMIT 2880"; // Last 24h (30s intervals)
 
-            try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+            try (Connection conn = DriverManager.getConnection(DB_URL);
                  Statement stmt = conn.createStatement();
                  ResultSet rs = stmt.executeQuery(sql)) {
 
@@ -171,14 +189,14 @@ public class HumidityMonitor {
                     if (!first) json.append(",");
                     first = false;
                     
-                    Timestamp ts = rs.getTimestamp("timestamp");
+                    String ts = rs.getString("timestamp"); // SQLite returns string
                     int humidity = rs.getInt("humidity");
                     double temp = rs.getDouble("temp_supply");
                     int rpm = rs.getInt("fan_rpm");
 
                     json.append(String.format(
                         "{\"timestamp\":\"%s\", \"humidity\":%d, \"temp\":%.1f, \"rpm\":%d}",
-                        ts.toString(), humidity, temp, rpm
+                        ts, humidity, temp, rpm
                     ));
                 }
 
@@ -363,7 +381,7 @@ public class HumidityMonitor {
     private boolean saveToDatabase(int humidity, double tempSupply, int rpm) {
         String sql = "INSERT INTO humidity_readings (humidity, temp_supply, fan_rpm) VALUES (?, ?, ?)";
 
-        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+        try (Connection conn = DriverManager.getConnection(DB_URL);
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
             pstmt.setInt(1, humidity);
@@ -389,9 +407,9 @@ public class HumidityMonitor {
     }
 
     private void cleanupOldData() {
-        String sql = "DELETE FROM humidity_readings WHERE timestamp < NOW() - INTERVAL '14 days'";
+        String sql = "DELETE FROM humidity_readings WHERE timestamp < datetime('now', '-14 days')";
         
-        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+        try (Connection conn = DriverManager.getConnection(DB_URL);
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             
             int deleted = pstmt.executeUpdate();

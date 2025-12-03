@@ -1,6 +1,6 @@
 {
   "name": "Genvex Humidity Monitor",
-  "version": "1.11",
+  "version": "1.12",
   "slug": "genvex_monitor",
   "description": "Java-based Genvex Ventilation Control and Monitoring",
   "url": "https://github.com/lutherh/genvexassistant",
@@ -15,21 +15,11 @@
   "options": {
     "genvex_ip": "192.168.1.100",
     "genvex_email": "user@example.com",
-    "db_host": "core-postgresql",
-    "db_port": 5432,
-    "db_name": "genvex",
-    "db_user": "postgres",
-    "db_password": "123456",
     "boost_enabled": true
   },
   "schema": {
     "genvex_ip": "str",
     "genvex_email": "str",
-    "db_host": "str",
-    "db_port": "int",
-    "db_name": "str",
-    "db_user": "str",
-    "db_password": "str",
     "boost_enabled": "bool"
   }
 }
