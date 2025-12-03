@@ -52,6 +52,8 @@ public class HumidityMonitor {
 
     // State
     private int lastHumidity = -1;
+    private double lastTemp = -1.0;
+    private int lastRpm = -1;
     private boolean boostActive = false;
     private long boostEndTime = 0;
     private int currentFanSpeed = -1;
@@ -79,11 +81,29 @@ public class HumidityMonitor {
             HttpServer server = HttpServer.create(new InetSocketAddress(WEB_PORT), 0);
             server.createContext("/", new StaticFileHandler());
             server.createContext("/api/history", new HistoryApiHandler());
+            server.createContext("/api/live", new LiveApiHandler());
             server.setExecutor(null);
             server.start();
             log("Web Dashboard started on port " + WEB_PORT);
         } catch (IOException e) {
             logError("Failed to start web server: " + e.getMessage());
+        }
+    }
+
+    class LiveApiHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange t) throws IOException {
+            t.getResponseHeaders().add("Content-Type", "application/json");
+            
+            String json = String.format(
+                "{\"humidity\":%d, \"temp\":%.1f, \"rpm\":%d, \"fan_speed\":%d, \"boost\":%b}",
+                lastHumidity, lastTemp, lastRpm, currentFanSpeed, boostActive
+            );
+
+            t.sendResponseHeaders(200, json.length());
+            try (OutputStream os = t.getResponseBody()) {
+                os.write(json.getBytes());
+            }
         }
     }
 
@@ -207,6 +227,8 @@ public class HumidityMonitor {
             updateFanSpeed(humidity);
 
             lastHumidity = humidity;
+            lastTemp = tempSupply;
+            lastRpm = rpm;
 
             if (saveToDatabase(humidity, tempSupply, rpm)) {
                 log("Logged: Humidity=" + humidity + "%, Temp=" + tempSupply + "C, RPM=" + rpm + (boostActive ? " [BOOST ACTIVE]" : ""));
