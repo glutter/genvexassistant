@@ -241,7 +241,11 @@ public class HumidityMonitor {
             // We don't have a direct "Fan Speed Level" read, so we might infer it or leave null
             // For now, we'll just store what we know.
             
-            double tempSupply = tempSupplyRaw / 10.0;
+            // Optima 270 temperature offset: raw values include +300 (i.e., +30.0C)
+            // Reference: `reference/temp_genvex_nabto/src/genvexnabto/models/optima270.py` uses offset -300 with divider 10
+            // Apply configurable offset via env var, defaulting to -300 for Optima 270
+            int tempSupplyOffsetRaw = Integer.parseInt(System.getenv().getOrDefault("TEMP_SUPPLY_OFFSET_RAW", "-300"));
+            double tempSupply = (tempSupplyRaw + tempSupplyOffsetRaw) / 10.0;
 
             // Check for boost conditions
             if (BOOST_ENABLED) {
