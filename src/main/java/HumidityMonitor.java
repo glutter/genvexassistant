@@ -55,6 +55,7 @@ public class HumidityMonitor {
 
     // State
     private int lastHumidity = -1;
+    private long lastHumidityTime = 0;
     private double lastTemp = -1.0;
     private int lastRpm = -1;
     private boolean boostActive = false;
@@ -251,6 +252,7 @@ public class HumidityMonitor {
             updateFanSpeed(humidity);
 
             lastHumidity = humidity;
+            lastHumidityTime = System.currentTimeMillis();
             lastTemp = tempSupply;
             lastRpm = rpm;
 
@@ -354,6 +356,16 @@ public class HumidityMonitor {
         if (lastHumidity == -1) return; // First run, can't calculate delta
 
         if (!boostActive) {
+            // Check if the time gap is too large (e.g., missed polls due to errors)
+            // If the gap is more than 2.5x the poll interval, we skip the check to avoid false positives
+            long timeGap = System.currentTimeMillis() - lastHumidityTime;
+            long maxGap = (long) (POLL_INTERVAL * 2.5 * 1000);
+            
+            if (timeGap > maxGap) {
+                log("Skipping boost check due to long gap between readings (" + (timeGap/1000) + "s). Re-establishing baseline.");
+                return;
+            }
+
             // Check for rapid rise
             if ((currentHumidity - lastHumidity) >= HUMIDITY_RISE_THRESHOLD) {
                 LocalTime now = LocalTime.now();
