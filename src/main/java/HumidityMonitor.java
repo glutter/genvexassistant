@@ -35,6 +35,7 @@ public class HumidityMonitor {
 
     private final GenvexClient client;
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+    private final String sessionId = java.util.UUID.randomUUID().toString().substring(0, 6);
 
     // Configuration
     private static final int POLL_INTERVAL = Integer.parseInt(System.getenv().getOrDefault("POLL_INTERVAL", "30"));
@@ -72,13 +73,15 @@ public class HumidityMonitor {
         // Start Web Server
         startWebServer();
 
-        // Run every POLL_INTERVAL seconds
-        scheduler.scheduleAtFixedRate(this::pollAndStore, 0, POLL_INTERVAL, TimeUnit.SECONDS);
+        log("Starting polling service with Session ID: " + sessionId);
+
+        // Run with fixed delay to allow natural drift and prevent lock-step collisions
+        scheduler.scheduleWithFixedDelay(this::pollAndStore, 0, POLL_INTERVAL, TimeUnit.SECONDS);
         
         // Run cleanup daily
         scheduler.scheduleAtFixedRate(this::cleanupOldData, 1, 24, TimeUnit.HOURS);
         
-        System.out.println("Humidity Monitor started.");
+        System.out.println("Humidity Monitor started. Session ID: " + sessionId);
     }
 
     private void initializeDatabase() {
@@ -432,12 +435,12 @@ public class HumidityMonitor {
 
     private void log(String message) {
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-        System.out.println("[" + timestamp + "] " + message);
+        System.out.println("[" + timestamp + "] [" + sessionId + "] " + message);
     }
 
     private void logError(String message) {
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-        System.err.println("[" + timestamp + "] " + message);
+        System.err.println("[" + timestamp + "] [" + sessionId + "] " + message);
     }
 
     public static void main(String[] args) {
