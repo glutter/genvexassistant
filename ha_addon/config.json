@@ -1,6 +1,6 @@
 {
   "name": "Genvex Humidity Monitor",
-  "version": "1.19",
+  "version": "1.20",
   "slug": "genvex_monitor",
   "description": "Java-based Genvex Ventilation Control and Monitoring",
   "url": "https://github.com/lutherh/genvexassistant",
@@ -24,7 +24,8 @@
     "humidity_high_threshold": 60,
     "humidity_low_threshold": 30,
     "night_start": "23:00",
-    "night_end": "06:30"
+    "night_end": "06:30",
+    "temp_supply_offset_raw": -300
   },
   "schema": {
     "genvex_ip": "str",
@@ -38,6 +39,7 @@
     "humidity_high_threshold": "int",
     "humidity_low_threshold": "int",
     "night_start": "str",
-    "night_end": "str"
+    "night_end": "str",
+    "temp_supply_offset_raw": "int"
   }
 }

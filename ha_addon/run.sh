@@ -18,6 +18,7 @@ if [ -f "$CONFIG_PATH" ]; then
     export HUMIDITY_LOW_THRESHOLD=$(jq --raw-output '.humidity_low_threshold' $CONFIG_PATH)
     export NIGHT_START=$(jq --raw-output '.night_start' $CONFIG_PATH)
     export NIGHT_END=$(jq --raw-output '.night_end' $CONFIG_PATH)
+    export TEMP_SUPPLY_OFFSET_RAW=$(jq --raw-output '.temp_supply_offset_raw // -300' $CONFIG_PATH)
 else
     echo "Warning: $CONFIG_PATH not found. Using environment variables or defaults."
 fi
@@ -26,6 +27,7 @@ echo "Configuration:"
 echo "  Genvex IP: $GENVEX_IP"
 echo "  Poll Interval: $POLL_INTERVAL s"
 echo "  Boost Enabled: $BOOST_ENABLED"
+echo "  Supply Temp Offset Raw: $TEMP_SUPPLY_OFFSET_RAW"
 
 # Start the Java application
 exec java -Djava.net.preferIPv4Stack=true -jar /app/app.jar
