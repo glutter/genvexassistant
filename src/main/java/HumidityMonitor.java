@@ -36,18 +36,21 @@ public class HumidityMonitor {
     private final GenvexClient client;
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
 
+    // Configuration
+    private static final int POLL_INTERVAL = Integer.parseInt(System.getenv().getOrDefault("POLL_INTERVAL", "30"));
+
     // Boost Configuration
     private static final boolean BOOST_ENABLED = Boolean.parseBoolean(System.getenv().getOrDefault("BOOST_ENABLED", "true"));
-    private static final int HUMIDITY_RISE_THRESHOLD = 2; // % rise per poll (30s)
-    private static final int BOOST_SPEED = 3;
-    private static final int NORMAL_SPEED = 2;
-    private static final long BOOST_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+    private static final int HUMIDITY_RISE_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_RISE_THRESHOLD", "2")); // % rise per poll
+    private static final int BOOST_SPEED = Integer.parseInt(System.getenv().getOrDefault("BOOST_SPEED", "3"));
+    private static final int NORMAL_SPEED = Integer.parseInt(System.getenv().getOrDefault("NORMAL_SPEED", "2"));
+    private static final long BOOST_DURATION_MS = Integer.parseInt(System.getenv().getOrDefault("BOOST_DURATION_MINUTES", "15")) * 60 * 1000L;
 
     // General Control Configuration
-    private static final int HUMIDITY_HIGH_THRESHOLD = 60;
-    private static final int HUMIDITY_LOW_THRESHOLD = 30;
-    private static final LocalTime NIGHT_START = LocalTime.of(23, 0);
-    private static final LocalTime NIGHT_END = LocalTime.of(6, 30);
+    private static final int HUMIDITY_HIGH_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_HIGH_THRESHOLD", "60"));
+    private static final int HUMIDITY_LOW_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_LOW_THRESHOLD", "30"));
+    private static final LocalTime NIGHT_START = LocalTime.parse(System.getenv().getOrDefault("NIGHT_START", "23:00"));
+    private static final LocalTime NIGHT_END = LocalTime.parse(System.getenv().getOrDefault("NIGHT_END", "06:30"));
 
     // State
     private int lastHumidity = -1;
@@ -69,8 +72,8 @@ public class HumidityMonitor {
         // Start Web Server
         startWebServer();
 
-        // Run every 30 seconds
-        scheduler.scheduleAtFixedRate(this::pollAndStore, 0, 30, TimeUnit.SECONDS);
+        // Run every POLL_INTERVAL seconds
+        scheduler.scheduleAtFixedRate(this::pollAndStore, 0, POLL_INTERVAL, TimeUnit.SECONDS);
         
         // Run cleanup daily
         scheduler.scheduleAtFixedRate(this::cleanupOldData, 1, 24, TimeUnit.HOURS);

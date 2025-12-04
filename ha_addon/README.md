@@ -18,7 +18,16 @@ Before starting, configure the add-on in the **Configuration** tab:
 
 - `genvex_ip`: The IP address of your Genvex unit.
 - `genvex_email`: The email used for the Genvex connection (password).
+- `poll_interval`: How often to read data in seconds (default: 30).
 - `boost_enabled`: Enable/Disable automatic fan boost on humidity rise.
+- `humidity_rise_threshold`: Percentage rise in humidity to trigger boost (default: 2).
+- `boost_speed`: Fan speed level for boost (default: 3).
+- `normal_speed`: Fan speed level for normal operation (default: 2).
+- `boost_duration_minutes`: How long boost stays active (default: 15).
+- `humidity_high_threshold`: Humidity level to trigger high speed (default: 60).
+- `humidity_low_threshold`: Humidity level to trigger low speed (default: 30).
+- `night_start`: Start time for night mode (HH:mm, default: 23:00).
+- `night_end`: End time for night mode (HH:mm, default: 06:30).
 
 ## Database
 
