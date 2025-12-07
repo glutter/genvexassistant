@@ -46,6 +46,13 @@
 
         <div class="controls">
             <button onclick="fetchData()">Refresh Data</button>
+            <select id="udluftning-level">
+                <option value="1">Speed 1</option>
+                <option value="2">Speed 2</option>
+                <option value="3">Speed 3</option>
+                <option value="4">Speed 4</option>
+            </select>
+            <button onclick="triggerUdluftning()">Udluftning</button>
         </div>
         <canvas id="mainChart"></canvas>
     </div>
@@ -170,6 +177,26 @@
         fetchData();
         // Auto refresh every 30s
         setInterval(fetchData, 30000);
+
+        async function triggerUdluftning() {
+            const level = parseInt(document.getElementById('udluftning-level').value);
+            try {
+                const res = await fetch('/api/fan/udluftning', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ level: level, duration_minutes: 30 })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    alert(`Udluftning set: level ${data.level} for ${data.minutes} minutes`);
+                    fetchData();
+                } else {
+                    alert('Failed to set Udluftning');
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
     </script>
 </body>
 </html>

@@ -62,6 +62,10 @@ public class HumidityMonitor {
     private long boostEndTime = 0;
     private int currentFanSpeed = -1;
     private int dbErrorCount = 0;
+    // Manual override (Udluftning)
+    private boolean manualOverrideActive = false;
+    private long manualOverrideEndTime = 0;
+    private int manualOverrideSpeed = -1;
 
     public HumidityMonitor(String ip, String email) {
         this.client = new GenvexClient(ip, email);
@@ -107,6 +111,7 @@ public class HumidityMonitor {
             server.createContext("/", new StaticFileHandler());
             server.createContext("/api/history", new HistoryApiHandler());
             server.createContext("/api/live", new LiveApiHandler());
+            server.createContext("/api/fan/udluftning", new UdluftningApiHandler());
             server.setExecutor(null);
             server.start();
             log("Web Dashboard started on port " + WEB_PORT);
@@ -325,7 +330,10 @@ public class HumidityMonitor {
     private void updateFanSpeed(int humidity) {
         int targetSpeed = NORMAL_SPEED;
 
-        if (boostActive) {
+        // Manual override takes precedence over everything
+        if (manualOverrideActive && System.currentTimeMillis() < manualOverrideEndTime) {
+            targetSpeed = manualOverrideSpeed;
+        } else if (boostActive) {
             targetSpeed = BOOST_SPEED;
         } else {
             LocalTime now = LocalTime.now();
@@ -405,6 +413,64 @@ public class HumidityMonitor {
     private void deactivateBoost() {
         boostActive = false;
         // Speed change will be handled by updateFanSpeed()
+    }
+
+    class UdluftningApiHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange t) throws IOException {
+            if (!t.getRequestMethod().equalsIgnoreCase("POST")) {
+                String response = "Method Not Allowed";
+                t.sendResponseHeaders(405, response.length());
+                try (OutputStream os = t.getResponseBody()) { os.write(response.getBytes()); }
+                return;
+            }
+
+            java.io.InputStream is = t.getRequestBody();
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[1024];
+            int n;
+            while ((n = is.read(buf)) != -1) { baos.write(buf, 0, n); }
+            byte[] body = baos.toByteArray();
+            String payload = new String(body);
+            int level = NORMAL_SPEED;
+            int durationMinutes = 30;
+            try {
+                // Very simple JSON parsing without external libs
+                // Expecting: {"level":2,"duration_minutes":30}
+                String p = payload.replaceAll("\\s", "");
+                if (p.contains("\"level\"")) {
+                    String part = p.split("\"level\":")[1];
+                    String num = part.split(",|}\\")[0];
+                    level = Integer.parseInt(num);
+                }
+                if (p.contains("\"duration_minutes\"")) {
+                    String part = p.split("\"duration_minutes\":")[1];
+                    String num = part.split(",|}\\")[0];
+                    durationMinutes = Integer.parseInt(num);
+                }
+            } catch (Exception e) {
+                // Use defaults if parsing fails
+            }
+
+            if (level < 0 || level > 4) level = NORMAL_SPEED;
+            if (durationMinutes < 1) durationMinutes = 30;
+
+            manualOverrideActive = true;
+            manualOverrideSpeed = level;
+            manualOverrideEndTime = System.currentTimeMillis() + (durationMinutes * 60L * 1000L);
+
+            try {
+                client.setFanSpeed(level);
+                currentFanSpeed = level;
+            } catch (Exception e) {
+                logError("Failed to set fan speed via Udluftning: " + e.getMessage());
+            }
+
+            String json = String.format("{\"ok\":true,\"level\":%d,\"minutes\":%d,\"until\":%d}", level, durationMinutes, manualOverrideEndTime);
+            t.getResponseHeaders().add("Content-Type", "application/json");
+            t.sendResponseHeaders(200, json.length());
+            try (OutputStream os = t.getResponseBody()) { os.write(json.getBytes()); }
+        }
     }
 
     private boolean saveToDatabase(int humidity, double tempSupply, int rpm) {
