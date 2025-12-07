@@ -63,9 +63,9 @@ public class HumidityMonitor {
     private int currentFanSpeed = -1;
     private int dbErrorCount = 0;
     // Manual override (Udluftning)
-    private boolean manualOverrideActive = false;
-    private long manualOverrideEndTime = 0;
-    private int manualOverrideSpeed = -1;
+    private volatile boolean manualOverrideActive = false;
+    private volatile long manualOverrideEndTime = 0;
+    private volatile int manualOverrideSpeed = -1;
 
     public HumidityMonitor(String ip, String email) {
         this.client = new GenvexClient(ip, email);
@@ -440,12 +440,12 @@ public class HumidityMonitor {
                 String p = payload.replaceAll("\\s", "");
                 if (p.contains("\"level\"")) {
                     String part = p.split("\"level\":")[1];
-                    String num = part.split(",|}\\")[0];
+                    String num = part.split("[,}]")[0];
                     level = Integer.parseInt(num);
                 }
                 if (p.contains("\"duration_minutes\"")) {
                     String part = p.split("\"duration_minutes\":")[1];
-                    String num = part.split(",|}\\")[0];
+                    String num = part.split("[,}]")[0];
                     durationMinutes = Integer.parseInt(num);
                 }
             } catch (Exception e) {
