@@ -42,10 +42,11 @@ public class HumidityMonitor {
 
     // Boost Configuration
     private static final boolean BOOST_ENABLED = Boolean.parseBoolean(System.getenv().getOrDefault("BOOST_ENABLED", "true"));
-    private static final int HUMIDITY_RISE_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_RISE_THRESHOLD", "2")); // % rise per poll
+    private static final int HUMIDITY_RISE_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_RISE_THRESHOLD", "3")); // % rise per poll
     private static final int BOOST_SPEED = Integer.parseInt(System.getenv().getOrDefault("BOOST_SPEED", "3"));
     private static final int NORMAL_SPEED = Integer.parseInt(System.getenv().getOrDefault("NORMAL_SPEED", "2"));
-    private static final long BOOST_DURATION_MS = Integer.parseInt(System.getenv().getOrDefault("BOOST_DURATION_MINUTES", "15")) * 60 * 1000L;
+    private static final long BOOST_DURATION_MS = Integer.parseInt(System.getenv().getOrDefault("BOOST_DURATION_MINUTES", "30")) * 60 * 1000L;
+    private static final int HUMIDITY_HYSTERESIS = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_HYSTERESIS", "5")); // % below target to exit boost
 
     // General Control Configuration
     private static final int HUMIDITY_HIGH_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_HIGH_THRESHOLD", "60"));
@@ -60,6 +61,8 @@ public class HumidityMonitor {
     private int lastRpm = -1;
     private boolean boostActive = false;
     private long boostEndTime = 0;
+    private long boostMinEndTime = 0; // Minimum boost duration before allowing deactivation
+    private int boostActivationHumidity = -1; // Humidity level when boost was activated
     private int currentFanSpeed = -1;
     private int dbErrorCount = 0;
     // Manual override (Udluftning)
@@ -367,10 +370,12 @@ public class HumidityMonitor {
     private void checkBoostLogic(int currentHumidity) {
         if (lastHumidity == -1) return; // First run, can't calculate delta
 
+        long now = System.currentTimeMillis();
+        
         if (!boostActive) {
             // Check if the time gap is too large (e.g., missed polls due to errors)
             // If the gap is more than 2.5x the poll interval, we skip the check to avoid false positives
-            long timeGap = System.currentTimeMillis() - lastHumidityTime;
+            long timeGap = now - lastHumidityTime;
             long maxGap = (long) (POLL_INTERVAL * 2.5 * 1000);
             
             if (timeGap > maxGap) {
@@ -378,40 +383,57 @@ public class HumidityMonitor {
                 return;
             }
 
-            // Check for rapid rise
-            if ((currentHumidity - lastHumidity) >= HUMIDITY_RISE_THRESHOLD) {
-                LocalTime now = LocalTime.now();
-                boolean isNight = now.isAfter(NIGHT_START) || now.isBefore(NIGHT_END);
+            // Check for rapid rise or high humidity
+            boolean rapidRise = (currentHumidity - lastHumidity) >= HUMIDITY_RISE_THRESHOLD;
+            boolean highHumidity = currentHumidity >= HUMIDITY_HIGH_THRESHOLD;
+            
+            if (rapidRise || highHumidity) {
+                LocalTime timeNow = LocalTime.now();
+                boolean isNight = timeNow.isAfter(NIGHT_START) || timeNow.isBefore(NIGHT_END);
 
                 if (isNight) {
-                    log("Rapid humidity rise detected, but Boost is disabled at night.");
+                    if (rapidRise) {
+                        log("Rapid humidity rise detected, but Boost is disabled at night.");
+                    }
                 } else {
-                    log("Rapid humidity rise detected (" + lastHumidity + "% -> " + currentHumidity + "%). Activating Boost.");
-                    activateBoost();
+                    if (rapidRise) {
+                        log("Rapid humidity rise detected (" + lastHumidity + "% -> " + currentHumidity + "%). Activating Boost.");
+                    } else {
+                        log("High humidity detected (" + currentHumidity + "% >= " + HUMIDITY_HIGH_THRESHOLD + "%). Activating Boost.");
+                    }
+                    activateBoost(currentHumidity);
                 }
             }
         } else {
-            // Check if we should deactivate
-            if (System.currentTimeMillis() >= boostEndTime) {
-                if (currentHumidity <= lastHumidity) {
-                     log("Boost time over and humidity stable. Deactivating Boost.");
-                     deactivateBoost();
-                } else {
-                    log("Boost time over but humidity still rising. Extending 5 minutes...");
-                    boostEndTime = System.currentTimeMillis() + (5 * 60 * 1000);
+            // Boost is active: use hysteresis to prevent rapid oscillation
+            // Stay in boost until humidity is sufficiently low
+            int boostExitHumidity = boostActivationHumidity - HUMIDITY_HYSTERESIS;
+            
+            // Ensure minimum boost duration before checking exit condition
+            if (now >= boostMinEndTime) {
+                if (currentHumidity <= boostExitHumidity) {
+                    log("Humidity normalized (" + currentHumidity + "% <= " + boostExitHumidity + "%). Deactivating Boost.");
+                    deactivateBoost();
+                } else if (now >= boostEndTime) {
+                    log("Boost duration exhausted (current humidity: " + currentHumidity + "%, target: " + boostExitHumidity + "%). Deactivating Boost anyway.");
+                    deactivateBoost();
                 }
             }
         }
     }
 
-    private void activateBoost() {
+    private void activateBoost(int activationHumidity) {
         boostActive = true;
-        boostEndTime = System.currentTimeMillis() + BOOST_DURATION_MS;
-        // Speed change will be handled by updateFanSpeed()
+        boostActivationHumidity = activationHumidity;
+        long now = System.currentTimeMillis();
+        boostMinEndTime = now + (10 * 60 * 1000); // Minimum 10 minutes before checking exit condition
+        boostEndTime = now + BOOST_DURATION_MS; // Absolute maximum
+        log("Boost activated at " + activationHumidity + "% humidity. Min duration: 10 min, Max duration: " + (BOOST_DURATION_MS / 60000) + " min.");
     }
 
     private void deactivateBoost() {
         boostActive = false;
+        boostActivationHumidity = -1;
         // Speed change will be handled by updateFanSpeed()
     }
 
