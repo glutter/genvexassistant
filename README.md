@@ -29,7 +29,7 @@ See [ADDRESS_MAP.md](ADDRESS_MAP.md) for the complete and verified list of addre
 ## Usage
 
 ### Prerequisites
-- Java Development Kit (JDK) 8 or higher.
+- Java Development Kit (JDK) 17 or higher.
 
 ### Run the Local API Server
 This project includes a local HTTP server to control the fan speed and read status.
