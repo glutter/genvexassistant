@@ -49,8 +49,8 @@ public class HumidityMonitor {
     private static final int HUMIDITY_HYSTERESIS = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_HYSTERESIS", "5")); // % below target to exit boost
 
     // General Control Configuration
-    private static final int HUMIDITY_HIGH_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_HIGH_THRESHOLD", "85"));
-    private static final int HUMIDITY_LOW_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_LOW_THRESHOLD", "30"));
+    private static final int HUMIDITY_VERY_HIGH_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_VERY_HIGH_THRESHOLD", "80"));
+    private static final int HUMIDITY_HIGH_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_HIGH_THRESHOLD", "65"));
     private static final LocalTime NIGHT_START = LocalTime.parse(System.getenv().getOrDefault("NIGHT_START", "23:00"));
     private static final LocalTime NIGHT_END = LocalTime.parse(System.getenv().getOrDefault("NIGHT_END", "06:30"));
 
@@ -346,15 +346,16 @@ public class HumidityMonitor {
                 targetSpeed = 1; // Night Mode (Lowest speed)
             } else {
                 // General Humidity Control
-                // If humidity > 65, we want to ensure speed is 2 (Normal Speed)
-                // We achieve this by not triggering High Speed (3) unless humidity is very high (>= 85)
+                // >= 80 -> Speed 3 (Boost)
+                // >= 65 -> Speed 2 (Normal)
+                // < 65  -> Speed 1 (Low)
                 
-                if (humidity >= HUMIDITY_HIGH_THRESHOLD) {
+                if (humidity >= HUMIDITY_VERY_HIGH_THRESHOLD) {
                     targetSpeed = 3;
-                } else if (humidity <= HUMIDITY_LOW_THRESHOLD) {
-                    targetSpeed = 1;
+                } else if (humidity >= HUMIDITY_HIGH_THRESHOLD) {
+                    targetSpeed = 2;
                 } else {
-                    targetSpeed = NORMAL_SPEED;
+                    targetSpeed = 1;
                 }
             }
         }

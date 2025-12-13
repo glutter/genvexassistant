@@ -4,8 +4,11 @@
 
 - Reverted Java runtime to Java 17 LTS for compatibility.
 - Removed RPM-based control.
-- Adjusted humidity control logic: High humidity (> 65%) now defaults to Normal Speed (2) instead of High Speed (3), unless humidity is very high (>= 85%).
-- Updated default High Humidity Threshold to 85%.
+- Adjusted humidity control logic:
+  - **Very High Humidity** (default 80%) -> Speed 3 (Boost)
+  - **High Humidity** (default 65%) -> Speed 2 (Normal)
+  - Below High Humidity -> Speed 1 (Low)
+- Added `humidity_very_high_threshold` configuration option.
 
 ## 1.24
 
