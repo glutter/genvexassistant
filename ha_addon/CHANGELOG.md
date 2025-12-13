@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.30
+
+- UI Overhaul: Dark Mode and Mobile Friendly design.
+- Updated Chart.js configuration for better visibility in dark mode.
+
 ## 1.29
 
 - Fixed SLF4J warning by adding slf4j-simple logging implementation.

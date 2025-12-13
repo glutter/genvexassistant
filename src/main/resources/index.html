@@ -8,17 +8,35 @@
     <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-moment@1.0.1/dist/chartjs-adapter-moment.min.js"></script>
     <style>
-        body { font-family: sans-serif; margin: 20px; background: #f4f4f9; }
-        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        h1 { text-align: center; color: #333; }
-        canvas { margin-top: 20px; }
-        .controls { text-align: center; margin-bottom: 20px; }
-        button { padding: 10px 20px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; }
-        button:hover { background: #0056b3; }
-        .live-data { display: flex; justify-content: space-around; margin-bottom: 20px; padding: 15px; background: #e9ecef; border-radius: 5px; }
-        .data-point { text-align: center; }
-        .data-value { font-size: 1.5em; font-weight: bold; color: #007bff; }
-        .data-label { font-size: 0.9em; color: #666; }
+        :root {
+            --bg-color: #121212;
+            --container-bg: #1e1e1e;
+            --text-color: #e0e0e0;
+            --accent-color: #bb86fc;
+            --secondary-text: #b0b0b0;
+            --card-bg: #2c2c2c;
+            --button-bg: #3700b3;
+            --button-hover: #6200ee;
+        }
+        body { font-family: sans-serif; margin: 0; padding: 10px; background: var(--bg-color); color: var(--text-color); }
+        .container { max-width: 1000px; margin: 0 auto; background: var(--container-bg); padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.5); }
+        h1 { text-align: center; color: var(--text-color); font-size: 1.5rem; margin-bottom: 20px; }
+        canvas { margin-top: 20px; width: 100% !important; height: auto !important; }
+        .controls { text-align: center; margin-bottom: 20px; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+        button, select { padding: 10px 20px; cursor: pointer; background: var(--button-bg); color: white; border: none; border-radius: 4px; font-size: 1rem; }
+        button:hover { background: var(--button-hover); }
+        select { background: var(--card-bg); color: var(--text-color); border: 1px solid #444; }
+        .live-data { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; margin-bottom: 20px; padding: 15px; background: var(--card-bg); border-radius: 5px; }
+        .data-point { text-align: center; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 4px; }
+        .data-value { font-size: 1.5em; font-weight: bold; color: var(--accent-color); }
+        .data-label { font-size: 0.9em; color: var(--secondary-text); margin-top: 5px; }
+        
+        @media (max-width: 600px) {
+            .container { padding: 10px; }
+            h1 { font-size: 1.2rem; }
+            .data-value { font-size: 1.2em; }
+            button, select { width: 100%; }
+        }
     </style>
 </head>
 <body>
@@ -129,9 +147,15 @@
                 },
                 options: {
                     responsive: true,
+                    maintainAspectRatio: false,
                     interaction: {
                         mode: 'index',
                         intersect: false,
+                    },
+                    plugins: {
+                        legend: {
+                            labels: { color: '#e0e0e0' }
+                        }
                     },
                     scales: {
                         x: {
@@ -144,8 +168,11 @@
                             },
                             title: {
                                 display: true,
-                                text: 'Time'
-                            }
+                                text: 'Time',
+                                color: '#b0b0b0'
+                            },
+                            ticks: { color: '#b0b0b0' },
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
                         },
                         y: {
                             type: 'linear',
@@ -153,20 +180,23 @@
                             position: 'left',
                             title: {
                                 display: true,
-                                text: 'Humidity % / Temp °C'
-                            }
+                                text: 'Humidity % / Temp °C',
+                                color: '#b0b0b0'
+                            },
+                            ticks: { color: '#b0b0b0' },
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
                         },
                         y1: {
                             type: 'linear',
                             display: true,
                             position: 'right',
+                            ticks: { color: '#b0b0b0' },
+                            grid: { drawOnChartArea: false },
                             title: {
                                 display: true,
-                                text: 'RPM'
-                            },
-                            grid: {
-                                drawOnChartArea: false,
-                            },
+                                text: 'RPM',
+                                color: '#b0b0b0'
+                            }
                         },
                     }
                 }
