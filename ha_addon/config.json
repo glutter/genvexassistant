@@ -12,7 +12,6 @@
   "ports": {
     "8081/tcp": 8081
   },
-  "image": "ghcr.io/lutherh/genvexassistant/{arch}-genvex-monitor",
   "options": {
     "genvex_ip": "",
     "genvex_email": "",
