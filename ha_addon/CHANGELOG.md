@@ -3,8 +3,9 @@
 ## 1.26
 
 - Reverted Java runtime to Java 17 LTS for compatibility.
-- Maintenance release.
-- Updated dependencies and build version.
+- Removed RPM-based control.
+- Adjusted humidity control logic: High humidity (> 65%) now defaults to Normal Speed (2) instead of High Speed (3), unless humidity is very high (>= 85%).
+- Updated default High Humidity Threshold to 85%.
 
 ## 1.24
 

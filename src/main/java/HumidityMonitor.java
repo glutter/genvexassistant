@@ -49,16 +49,10 @@ public class HumidityMonitor {
     private static final int HUMIDITY_HYSTERESIS = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_HYSTERESIS", "5")); // % below target to exit boost
 
     // General Control Configuration
-    private static final int HUMIDITY_HIGH_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_HIGH_THRESHOLD", "60"));
+    private static final int HUMIDITY_HIGH_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_HIGH_THRESHOLD", "85"));
     private static final int HUMIDITY_LOW_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_LOW_THRESHOLD", "30"));
     private static final LocalTime NIGHT_START = LocalTime.parse(System.getenv().getOrDefault("NIGHT_START", "23:00"));
     private static final LocalTime NIGHT_END = LocalTime.parse(System.getenv().getOrDefault("NIGHT_END", "06:30"));
-
-    // RPM Control Configuration
-    private static final boolean RPM_CONTROL_ENABLED = Boolean.parseBoolean(System.getenv().getOrDefault("RPM_CONTROL_ENABLED", "true"));
-    private static final int HUMIDITY_RPM_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_RPM_THRESHOLD", "65"));
-    private static final int TARGET_RPM = Integer.parseInt(System.getenv().getOrDefault("TARGET_RPM", "2000"));
-    private static final int RPM_TOLERANCE = Integer.parseInt(System.getenv().getOrDefault("RPM_TOLERANCE", "100")); // Range: TARGET_RPM ± RPM_TOLERANCE
 
     // State
     private int lastHumidity = -1;
@@ -351,13 +345,10 @@ public class HumidityMonitor {
             if (isNight) {
                 targetSpeed = 1; // Night Mode (Lowest speed)
             } else {
-                // RPM Control: If humidity is above threshold, adjust speed to maintain target RPM
-                if (RPM_CONTROL_ENABLED && humidity >= HUMIDITY_RPM_THRESHOLD) {
-                    adjustSpeedForTargetRpm(lastRpm);
-                    return; // Skip normal humidity-based speed control
-                }
-                
                 // General Humidity Control
+                // If humidity > 65, we want to ensure speed is 2 (Normal Speed)
+                // We achieve this by not triggering High Speed (3) unless humidity is very high (>= 85)
+                
                 if (humidity >= HUMIDITY_HIGH_THRESHOLD) {
                     targetSpeed = 3;
                 } else if (humidity <= HUMIDITY_LOW_THRESHOLD) {
@@ -376,41 +367,6 @@ public class HumidityMonitor {
             } catch (Exception e) {
                 logError("Failed to set fan speed: " + e.getMessage());
             }
-        }
-    }
-
-    private void adjustSpeedForTargetRpm(int currentRpm) {
-        // Keep RPM around target value by adjusting fan speed
-        int rpmLower = TARGET_RPM - RPM_TOLERANCE;
-        int rpmUpper = TARGET_RPM + RPM_TOLERANCE;
-
-        if (currentRpm < rpmLower) {
-            // RPM too low, increase speed
-            int nextSpeed = Math.min(currentFanSpeed + 1, 4);
-            if (nextSpeed != currentFanSpeed) {
-                try {
-                    log("RPM too low (" + currentRpm + " < " + rpmLower + "). Increasing speed: " + currentFanSpeed + " -> " + nextSpeed);
-                    client.setFanSpeed(nextSpeed);
-                    currentFanSpeed = nextSpeed;
-                } catch (Exception e) {
-                    logError("Failed to adjust speed for RPM control: " + e.getMessage());
-                }
-            }
-        } else if (currentRpm > rpmUpper) {
-            // RPM too high, decrease speed
-            int nextSpeed = Math.max(currentFanSpeed - 1, 1);
-            if (nextSpeed != currentFanSpeed) {
-                try {
-                    log("RPM too high (" + currentRpm + " > " + rpmUpper + "). Decreasing speed: " + currentFanSpeed + " -> " + nextSpeed);
-                    client.setFanSpeed(nextSpeed);
-                    currentFanSpeed = nextSpeed;
-                } catch (Exception e) {
-                    logError("Failed to adjust speed for RPM control: " + e.getMessage());
-                }
-            }
-        } else {
-            // RPM within tolerance
-            log("RPM in target range (" + currentRpm + " ≈ " + TARGET_RPM + "). Fan Speed: " + currentFanSpeed);
         }
     }
 
