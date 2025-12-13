@@ -234,9 +234,12 @@ public class HumidityMonitor {
 
     private void pollAndStore() {
         try {
-            if (!client.isConnected()) {
-                client.connect();
+            // Always reconnect before polling to avoid stale UDP sessions
+            // The Genvex unit tends to drop connections after ~60 seconds of inactivity
+            if (client.isConnected()) {
+                client.disconnect();
             }
+            client.connect();
 
             int humidity = client.readDatapoint(26);
             int tempSupplyRaw = client.readDatapoint(20);
