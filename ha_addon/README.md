@@ -4,6 +4,19 @@ This add-on runs the Java-based Genvex Ventilation Monitor.
 
 ## Installation
 
+### Option 1: Add Repository (Recommended)
+
+1. Go to **Settings > Add-ons > Add-on Store** in Home Assistant.
+2. Click the **three dots** (⋮) in the top right corner.
+3. Select **Repositories**.
+4. Add this URL: `https://github.com/lutherh/genvexassistant`
+5. Click **Add** and then **Close**.
+6. Search for "Genvex Humidity Monitor" and click **Install**.
+
+With this method, Home Assistant will automatically notify you when updates are available!
+
+### Option 2: Manual Installation
+
 1. Copy the `ha_addon` folder to the `/addons/local/` directory on your Home Assistant instance.
    - You can use the Samba Share add-on or SSH to do this.
    - The path should look like `/addons/local/genvex_monitor`.
