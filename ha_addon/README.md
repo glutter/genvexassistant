@@ -28,6 +28,7 @@ Before starting, configure the add-on in the **Configuration** tab:
 - `humidity_low_threshold`: Humidity level to trigger low speed (default: 30).
 - `night_start`: Start time for night mode (HH:mm, default: 23:00).
 - `night_end`: End time for night mode (HH:mm, default: 06:30).
+- `temp_supply_offset_raw`: Calibration offset for supply temperature (raw value, default: -300).
 
 ## Database
 
@@ -48,11 +49,23 @@ You can embed the custom dashboard directly into your Home Assistant Overview us
 2. Click **Add Card**.
 3. Search for and select **Webpage**.
 4. In the **URL** field, enter: `http://<YOUR_HA_IP>:8081` (e.g., `http://192.168.0.100:8081`).
-5. Set the **Aspect Ratio** to something like `75%` or `100%` to fit the graph.
-6. Click **Save**.
 
-Alternatively, since version 1.3+, the add-on exports sensors to Home Assistant. You can use the standard **History Graph** card with these entities:
+## Troubleshooting
+
+### Update not showing up?
+
+If you have updated the files in `/addons/local/genvex_monitor` but do not see an "Update" button in Home Assistant:
+
+1. Go to **Settings > Add-ons > Add-on Store**.
+2. Click the **three dots** (top right) and select **Check for updates**.
+3. If that doesn't work, try restarting Home Assistant.
+4. As a last resort, uninstall the add-on and install it again (your configuration should be preserved if you don't delete the add-on data, but backing up configuration is recommended).
+
+## Home Assistant Sensors
+
+The add-on exports sensors to Home Assistant. You can use the standard **History Graph** card with these entities:
 - `sensor.genvex_humidity`
 - `sensor.genvex_temp_supply`
 - `sensor.genvex_fan_rpm`
+- `sensor.genvex_fan_speed`
 

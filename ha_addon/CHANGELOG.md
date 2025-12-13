@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.28
+
+- Version bump to fix update triggers in Home Assistant.
+- Documentation updates.
+
 ## 1.26
 
 - Reverted Java runtime to Java 17 LTS for compatibility.
