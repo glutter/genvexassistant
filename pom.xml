@@ -6,7 +6,7 @@
 
     <groupId>com.genvex</groupId>
     <artifactId>genvex-integration</artifactId>
-    <version>1.1-SNAPSHOT</version>
+    <version>1.26-SNAPSHOT</version>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>
