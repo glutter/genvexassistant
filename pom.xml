@@ -6,7 +6,7 @@
 
     <groupId>com.genvex</groupId>
     <artifactId>genvex-integration</artifactId>
-    <version>1.28</version>
+    <version>1.29</version>
 
     <properties>
         <maven.compiler.source>17</maven.compiler.source>
@@ -20,6 +20,12 @@
             <groupId>org.xerial</groupId>
             <artifactId>sqlite-jdbc</artifactId>
             <version>3.45.1.0</version>
+        </dependency>
+        <!-- SLF4J Simple Logger (silences the SLF4J warning) -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>1.7.36</version>
         </dependency>
     </dependencies>
 

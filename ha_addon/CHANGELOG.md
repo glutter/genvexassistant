@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.29
+
+- Fixed SLF4J warning by adding slf4j-simple logging implementation.
+
 ## 1.28
 
 - Version bump to fix update triggers in Home Assistant.
