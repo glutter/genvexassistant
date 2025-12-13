@@ -7,4 +7,4 @@ export DB_PASSWORD=${2:-password}
 echo "Starting Humidity Monitor..."
 echo "Connecting to DB as user: $DB_USER"
 
-java -cp target/genvex-integration-1.0-SNAPSHOT.jar HumidityMonitor
+java -cp target/genvex-integration-1.1-SNAPSHOT.jar HumidityMonitor
