@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.32
+
+- Fixed RPM chart scaling (set max to 4000).
+- Updated demo image.
+
 ## 1.31
 
 - Fixed chart resizing issue (endless expansion).
