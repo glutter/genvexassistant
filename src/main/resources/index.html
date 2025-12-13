@@ -7,6 +7,8 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-moment@1.0.1/dist/chartjs-adapter-moment.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root {
             --bg-color: #121212;
@@ -17,68 +19,119 @@
             --card-bg: #2c2c2c;
             --button-bg: #3700b3;
             --button-hover: #6200ee;
+            --success-color: #03dac6;
+            --error-color: #cf6679;
         }
-        body { font-family: sans-serif; margin: 0; padding: 10px; background: var(--bg-color); color: var(--text-color); }
-        .container { max-width: 1000px; margin: 0 auto; background: var(--container-bg); padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.5); }
-        h1 { text-align: center; color: var(--text-color); font-size: 1.5rem; margin-bottom: 20px; }
-        canvas { margin-top: 20px; width: 100% !important; height: auto !important; }
-        .controls { text-align: center; margin-bottom: 20px; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
-        button, select { padding: 10px 20px; cursor: pointer; background: var(--button-bg); color: white; border: none; border-radius: 4px; font-size: 1rem; }
-        button:hover { background: var(--button-hover); }
-        select { background: var(--card-bg); color: var(--text-color); border: 1px solid #444; }
-        .live-data { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; margin-bottom: 20px; padding: 15px; background: var(--card-bg); border-radius: 5px; }
-        .data-point { text-align: center; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 4px; }
-        .data-value { font-size: 1.5em; font-weight: bold; color: var(--accent-color); }
-        .data-label { font-size: 0.9em; color: var(--secondary-text); margin-top: 5px; }
+        body { font-family: 'Inter', sans-serif; margin: 0; padding: 10px; background: var(--bg-color); color: var(--text-color); }
+        .container { max-width: 1000px; margin: 0 auto; background: var(--container-bg); padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); position: relative; }
         
+        /* Header */
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        h1 { margin: 0; font-size: 1.5rem; font-weight: 600; }
+        .refresh-btn { background: transparent; color: var(--secondary-text); font-size: 1.2rem; padding: 8px; border-radius: 50%; transition: all 0.3s; }
+        .refresh-btn:hover { background: rgba(255,255,255,0.1); color: var(--text-color); transform: rotate(180deg); }
+        
+        /* Data Grid */
+        .live-data { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 15px; margin-bottom: 25px; }
+        .data-point { text-align: center; padding: 15px; background: var(--card-bg); border-radius: 8px; transition: transform 0.2s; }
+        .data-point:hover { transform: translateY(-2px); }
+        .data-icon { font-size: 1.5rem; color: var(--accent-color); margin-bottom: 8px; }
+        .data-value { font-size: 1.8em; font-weight: 600; color: var(--text-color); }
+        .data-label { font-size: 0.85em; color: var(--secondary-text); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+        
+        /* Controls */
+        .control-card { background: rgba(55, 0, 179, 0.1); border: 1px solid var(--button-bg); padding: 20px; border-radius: 8px; margin-bottom: 25px; display: flex; flex-direction: column; align-items: center; gap: 15px; }
+        .control-title { font-size: 1rem; font-weight: 600; color: var(--accent-color); margin-bottom: 5px; }
+        .control-group { display: flex; gap: 10px; width: 100%; max-width: 400px; }
+        
+        button, select { padding: 12px 20px; cursor: pointer; background: var(--button-bg); color: white; border: none; border-radius: 6px; font-size: 1rem; font-weight: 500; transition: background 0.2s; }
+        button:hover { background: var(--button-hover); }
+        select { background: var(--card-bg); color: var(--text-color); border: 1px solid #444; flex-grow: 1; }
+        button.action-btn { flex-grow: 2; }
+
+        /* Chart */
+        canvas { width: 100% !important; height: 400px !important; }
+
+        /* Toast Notification */
+        #toast { visibility: hidden; min-width: 250px; background-color: #333; color: #fff; text-align: center; border-radius: 4px; padding: 16px; position: fixed; z-index: 1; left: 50%; bottom: 30px; transform: translateX(-50%); font-size: 1rem; box-shadow: 0 4px 12px rgba(0,0,0,0.3); opacity: 0; transition: opacity 0.3s, bottom 0.3s; }
+        #toast.show { visibility: visible; opacity: 1; bottom: 50px; }
+        #toast.success { border-left: 5px solid var(--success-color); }
+        #toast.error { border-left: 5px solid var(--error-color); }
+
+        /* Loading Overlay */
+        .loading { opacity: 0.5; pointer-events: none; }
+
         @media (max-width: 600px) {
-            .container { padding: 10px; }
+            .container { padding: 15px; border-radius: 0; }
             h1 { font-size: 1.2rem; }
-            .data-value { font-size: 1.2em; }
-            button, select { width: 100%; }
+            .control-group { flex-direction: column; }
+            .data-value { font-size: 1.5em; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Genvex Humidity & RPM Dashboard</h1>
+    <div class="container" id="main-container">
+        <div class="header">
+            <h1>Genvex Monitor</h1>
+            <button class="refresh-btn" onclick="fetchData()" title="Refresh Data"><i class="fas fa-sync-alt"></i></button>
+        </div>
         
         <div class="live-data">
             <div class="data-point">
+                <div class="data-icon"><i class="fas fa-tint"></i></div>
                 <div class="data-value" id="live-humidity">--%</div>
                 <div class="data-label">Humidity</div>
             </div>
             <div class="data-point">
+                <div class="data-icon"><i class="fas fa-thermometer-half"></i></div>
                 <div class="data-value" id="live-temp">--°C</div>
                 <div class="data-label">Supply Temp</div>
             </div>
             <div class="data-point">
+                <div class="data-icon"><i class="fas fa-fan"></i></div>
                 <div class="data-value" id="live-rpm">--</div>
                 <div class="data-label">Fan RPM</div>
             </div>
             <div class="data-point">
+                <div class="data-icon"><i class="fas fa-tachometer-alt"></i></div>
                 <div class="data-value" id="live-speed">--</div>
                 <div class="data-label">Fan Speed</div>
             </div>
         </div>
 
-        <div class="controls">
-            <button onclick="fetchData()">Refresh Data</button>
-            <select id="udluftning-level">
-                <option value="1">Speed 1</option>
-                <option value="2">Speed 2</option>
-                <option value="3">Speed 3</option>
-                <option value="4">Speed 4</option>
-            </select>
-            <button onclick="triggerUdluftning()">Udluftning</button>
+        <div class="control-card">
+            <div class="control-title"><i class="fas fa-wind"></i> Manual Ventilation (Udluftning)</div>
+            <div class="control-group">
+                <select id="udluftning-level">
+                    <option value="1">Speed 1 (Low)</option>
+                    <option value="2">Speed 2 (Normal)</option>
+                    <option value="3" selected>Speed 3 (Boost)</option>
+                    <option value="4">Speed 4 (Max)</option>
+                </select>
+                <button class="action-btn" onclick="triggerUdluftning()">Start (30m)</button>
+            </div>
         </div>
+
         <canvas id="mainChart"></canvas>
     </div>
+
+    <div id="toast">Notification</div>
 
     <script>
         let chart;
 
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById("toast");
+            toast.className = "show " + type;
+            toast.textContent = message;
+            setTimeout(function(){ toast.className = toast.className.replace("show", ""); }, 3000);
+        }
+
         async function fetchData() {
+            const container = document.getElementById('main-container');
+            // Only add loading class if it's a manual refresh (optional, but keeps auto-refresh smooth)
+            // container.classList.add('loading'); 
+            
             try {
                 // Fetch Live Data
                 const liveResponse = await fetch('api/live');
@@ -94,6 +147,9 @@
                 updateChart(data);
             } catch (error) {
                 console.error('Error fetching data:', error);
+                showToast('Error fetching data', 'error');
+            } finally {
+                // container.classList.remove('loading');
             }
         }
 
@@ -127,21 +183,27 @@
                             data: humidity,
                             borderColor: 'rgb(54, 162, 235)',
                             yAxisID: 'y',
-                            tension: 0.4
+                            tension: 0.4,
+                            pointRadius: 0,
+                            borderWidth: 2
                         },
                         {
                             label: 'Fan RPM',
                             data: rpm,
                             borderColor: 'rgb(255, 99, 132)',
                             yAxisID: 'y1',
-                            tension: 0.4
+                            tension: 0.4,
+                            pointRadius: 0,
+                            borderWidth: 2
                         },
                         {
                             label: 'Supply Temp (°C)',
                             data: temp,
                             borderColor: 'rgb(75, 192, 192)',
                             yAxisID: 'y',
-                            tension: 0.4
+                            tension: 0.4,
+                            pointRadius: 0,
+                            borderWidth: 2
                         }
                     ]
                 },
@@ -154,7 +216,14 @@
                     },
                     plugins: {
                         legend: {
-                            labels: { color: '#e0e0e0' }
+                            labels: { color: '#e0e0e0', font: { family: 'Inter' } }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(30, 30, 30, 0.9)',
+                            titleColor: '#fff',
+                            bodyColor: '#ccc',
+                            borderColor: '#444',
+                            borderWidth: 1
                         }
                     },
                     scales: {
@@ -172,7 +241,7 @@
                                 color: '#b0b0b0'
                             },
                             ticks: { color: '#b0b0b0' },
-                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' }
                         },
                         y: {
                             type: 'linear',
@@ -184,7 +253,7 @@
                                 color: '#b0b0b0'
                             },
                             ticks: { color: '#b0b0b0' },
-                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' }
                         },
                         y1: {
                             type: 'linear',
@@ -210,6 +279,12 @@
 
         async function triggerUdluftning() {
             const level = parseInt(document.getElementById('udluftning-level').value);
+            const btn = document.querySelector('.action-btn');
+            const originalText = btn.textContent;
+            
+            btn.textContent = 'Sending...';
+            btn.disabled = true;
+
             try {
                 const res = await fetch('api/fan/udluftning', {
                     method: 'POST',
@@ -218,13 +293,16 @@
                 });
                 if (res.ok) {
                     const data = await res.json();
-                    alert(`Udluftning set: level ${data.level} for ${data.minutes} minutes`);
+                    showToast(`✅ Ventilation started: Speed ${data.level} for ${data.minutes}m`, 'success');
                     fetchData();
                 } else {
-                    alert('Failed to set Udluftning');
+                    showToast('❌ Failed to set Ventilation', 'error');
                 }
             } catch (e) {
-                alert('Error: ' + e.message);
+                showToast('❌ Error: ' + e.message, 'error');
+            } finally {
+                btn.textContent = originalText;
+                btn.disabled = false;
             }
         }
     </script>
