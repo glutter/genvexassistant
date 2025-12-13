@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Genvex Humidity Monitor</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-moment@1.0.1/dist/chartjs-adapter-moment.min.js"></script>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background: #f4f4f9; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #333; }
+        canvas { margin-top: 20px; }
+        .controls { text-align: center; margin-bottom: 20px; }
+        button { padding: 10px 20px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; }
+        button:hover { background: #0056b3; }
+        .live-data { display: flex; justify-content: space-around; margin-bottom: 20px; padding: 15px; background: #e9ecef; border-radius: 5px; }
+        .data-point { text-align: center; }
+        .data-value { font-size: 1.5em; font-weight: bold; color: #007bff; }
+        .data-label { font-size: 0.9em; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Genvex Humidity & RPM Dashboard</h1>
+        
+        <div class="live-data">
+            <div class="data-point">
+                <div class="data-value" id="live-humidity">--%</div>
+                <div class="data-label">Humidity</div>
+            </div>
+            <div class="data-point">
+                <div class="data-value" id="live-temp">--°C</div>
+                <div class="data-label">Supply Temp</div>
+            </div>
+            <div class="data-point">
+                <div class="data-value" id="live-rpm">--</div>
+                <div class="data-label">Fan RPM</div>
+            </div>
+            <div class="data-point">
+                <div class="data-value" id="live-speed">--</div>
+                <div class="data-label">Fan Speed</div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button onclick="fetchData()">Refresh Data</button>
+            <select id="udluftning-level">
+                <option value="1">Speed 1</option>
+                <option value="2">Speed 2</option>
+                <option value="3">Speed 3</option>
+                <option value="4">Speed 4</option>
+            </select>
+            <button onclick="triggerUdluftning()">Udluftning</button>
+        </div>
+        <canvas id="mainChart"></canvas>
+    </div>
+
+    <script>
+        let chart;
+
+        async function fetchData() {
+            try {
+                // Fetch Live Data
+                const liveResponse = await fetch('api/live');
+                if (liveResponse.ok) {
+                    const liveData = await liveResponse.json();
+                    updateLiveDisplay(liveData);
+                }
+
+                // Fetch History Data
+                const response = await fetch('api/history');
+                const data = await response.json();
+                
+                updateChart(data);
+            } catch (error) {
+                console.error('Error fetching data:', error);
+            }
+        }
+
+        function updateLiveDisplay(data) {
+            document.getElementById('live-humidity').textContent = data.humidity + '%';
+            document.getElementById('live-temp').textContent = data.temp.toFixed(1) + '°C';
+            document.getElementById('live-rpm').textContent = data.rpm;
+            document.getElementById('live-speed').textContent = data.fan_speed;
+        }
+
+        function updateChart(data) {
+            const ctx = document.getElementById('mainChart').getContext('2d');
+            
+            // Data processing
+            const timestamps = data.map(d => d.timestamp);
+            const humidity = data.map(d => d.humidity);
+            const rpm = data.map(d => d.rpm);
+            const temp = data.map(d => d.temp);
+
+            if (chart) {
+                chart.destroy();
+            }
+
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: timestamps,
+                    datasets: [
+                        {
+                            label: 'Humidity (%)',
+                            data: humidity,
+                            borderColor: 'rgb(54, 162, 235)',
+                            yAxisID: 'y',
+                            tension: 0.4
+                        },
+                        {
+                            label: 'Fan RPM',
+                            data: rpm,
+                            borderColor: 'rgb(255, 99, 132)',
+                            yAxisID: 'y1',
+                            tension: 0.4
+                        },
+                        {
+                            label: 'Supply Temp (°C)',
+                            data: temp,
+                            borderColor: 'rgb(75, 192, 192)',
+                            yAxisID: 'y',
+                            tension: 0.4
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                unit: 'minute',
+                                displayFormats: {
+                                    minute: 'HH:mm'
+                                }
+                            },
+                            title: {
+                                display: true,
+                                text: 'Time'
+                            }
+                        },
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: {
+                                display: true,
+                                text: 'Humidity % / Temp °C'
+                            }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: {
+                                display: true,
+                                text: 'RPM'
+                            },
+                            grid: {
+                                drawOnChartArea: false,
+                            },
+                        },
+                    }
+                }
+            });
+        }
+
+        // Initial load
+        fetchData();
+        // Auto refresh every 30s
+        setInterval(fetchData, 30000);
+
+        async function triggerUdluftning() {
+            const level = parseInt(document.getElementById('udluftning-level').value);
+            try {
+                const res = await fetch('api/fan/udluftning', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ level: level, duration_minutes: 30 })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    alert(`Udluftning set: level ${data.level} for ${data.minutes} minutes`);
+                    fetchData();
+                } else {
+                    alert('Failed to set Udluftning');
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+    </script>
+</body>
+</html>

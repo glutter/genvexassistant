@@ -1,0 +1,11 @@
+*.class
+.DS_Store
+server.log
+target/
+dependency-reduced-pom.xml
+
+# Sensitive/local files
+deploy*.exp
+*.env
+.env*
+genvex.db

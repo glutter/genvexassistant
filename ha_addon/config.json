@@ -1,0 +1,48 @@
+{
+  "name": "Genvex Humidity Monitor",
+  "version": "1.28",
+  "slug": "genvex_monitor",
+  "description": "Java-based Genvex Ventilation Control and Monitoring",
+  "url": "https://github.com/lutherh/genvexassistant",
+  "startup": "application",
+  "arch": ["aarch64", "amd64", "armv7"],
+  "homeassistant_api": true,
+  "ingress": true,
+  "ingress_port": 8081,
+  "ports": {
+    "8081/tcp": 8081
+  },
+  "image": "ghcr.io/lutherh/genvexassistant/{arch}-genvex-monitor",
+  "options": {
+    "genvex_ip": "",
+    "genvex_email": "",
+    "poll_interval": 30,
+    "boost_enabled": true,
+    "humidity_rise_threshold": 2,
+    "boost_speed": 3,
+    "normal_speed": 1,
+    "boost_duration_minutes": 15,
+    "humidity_very_high_threshold": 80,
+    "humidity_high_threshold": 65,
+    "humidity_low_threshold": 30,
+    "night_start": "22:00",
+    "night_end": "06:30",
+    "temp_supply_offset_raw": -300
+  },
+  "schema": {
+    "genvex_ip": "str",
+    "genvex_email": "str",
+    "poll_interval": "int",
+    "boost_enabled": "bool",
+    "humidity_rise_threshold": "int",
+    "boost_speed": "int",
+    "normal_speed": "int",
+    "boost_duration_minutes": "int",
+    "humidity_very_high_threshold": "int",
+    "humidity_high_threshold": "int",
+    "humidity_low_threshold": "int",
+    "night_start": "str",
+    "night_end": "str",
+    "temp_supply_offset_raw": "int"
+  }
+}
