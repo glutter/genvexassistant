@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.31
+
+- Fixed chart resizing issue (endless expansion).
+- Improved chart container stability.
+
 ## 1.30
 
 - UI Overhaul: Dark Mode and Mobile Friendly design.

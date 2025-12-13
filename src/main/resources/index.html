@@ -22,6 +22,7 @@
             --success-color: #03dac6;
             --error-color: #cf6679;
         }
+        * { box-sizing: border-box; }
         body { font-family: 'Inter', sans-serif; margin: 0; padding: 10px; background: var(--bg-color); color: var(--text-color); }
         .container { max-width: 1000px; margin: 0 auto; background: var(--container-bg); padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); position: relative; }
         
@@ -50,7 +51,8 @@
         button.action-btn { flex-grow: 2; }
 
         /* Chart */
-        canvas { width: 100% !important; height: 400px !important; }
+        .chart-container { position: relative; height: 400px; width: 100%; }
+        canvas { width: 100% !important; height: 100% !important; }
 
         /* Toast Notification */
         #toast { visibility: hidden; min-width: 250px; background-color: #333; color: #fff; text-align: center; border-radius: 4px; padding: 16px; position: fixed; z-index: 1; left: 50%; bottom: 30px; transform: translateX(-50%); font-size: 1rem; box-shadow: 0 4px 12px rgba(0,0,0,0.3); opacity: 0; transition: opacity 0.3s, bottom 0.3s; }
@@ -112,7 +114,9 @@
             </div>
         </div>
 
-        <canvas id="mainChart"></canvas>
+        <div class="chart-container">
+            <canvas id="mainChart"></canvas>
+        </div>
     </div>
 
     <div id="toast">Notification</div>
