@@ -2,6 +2,7 @@
 
 ## 1.26
 
+- Reverted Java runtime to Java 17 LTS for compatibility.
 - Maintenance release.
 - Updated dependencies and build version.
 
