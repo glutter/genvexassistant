@@ -17,7 +17,7 @@
     "genvex_email": "",
     "poll_interval": 30,
     "boost_enabled": true,
-    "humidity_rise_threshold": 2,
+    "humidity_rise_threshold": 4,
     "boost_speed": 3,
     "normal_speed": 1,
     "boost_duration_minutes": 15,
