@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.33
+
+- Added **Static RPM Mode**: Manual override to set a fixed fan speed that bypasses humidity-based control.
+- Extended data retention period from 14 days to **1 month**.
+- New `/api/fan/static` endpoint for enabling/disabling static mode via API.
+- Dashboard updated with Static RPM Mode controls.
+
 ## 1.32
 
 - Fixed RPM chart scaling (set max to 4000).
