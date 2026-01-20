@@ -28,7 +28,7 @@ public class GenvexClient {
 
     public void connect() throws IOException, InterruptedException {
         socket = new DatagramSocket();
-        socket.setSoTimeout(5000);
+        socket.setSoTimeout(2500); // Optimized timeout (was 5000)
         address = InetAddress.getByName(ipAddress);
 
         // Generate Client ID
@@ -80,7 +80,8 @@ public class GenvexClient {
         if (!connected) throw new IOException("Not connected");
         
         byte[] cmd = buildDatapointReadCommand(addr);
-        byte[] response = sendPacketAndWaitForResponse(sequenceId++, cmd, 3);
+        // Increased retries to 5 for better stability
+        byte[] response = sendPacketAndWaitForResponse(sequenceId++, cmd, 5);
         
         if (response != null && response.length >= 4) {
             return ((response[2] & 0xFF) << 8) | (response[3] & 0xFF);
@@ -93,7 +94,7 @@ public class GenvexClient {
         if (speed < 0 || speed > 4) throw new IllegalArgumentException("Speed must be 0-4");
 
         byte[] cmd = buildSetpointWriteCommand(24, speed);
-        sendPacketAndWaitForResponse(sequenceId++, cmd, 3);
+        sendPacketAndWaitForResponse(sequenceId++, cmd, 5);
     }
 
     // --- Private Helpers ---
