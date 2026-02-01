@@ -39,7 +39,7 @@ public class HumidityMonitor {
 
     // Configuration
     private static final int POLL_INTERVAL = Integer.parseInt(System.getenv().getOrDefault("POLL_INTERVAL", "30"));
-    private static final boolean MONITOR_ONLY = Boolean.parseBoolean(System.getenv().getOrDefault("MONITOR_ONLY", "true"));
+    private volatile boolean monitorOnly = Boolean.parseBoolean(System.getenv().getOrDefault("MONITOR_ONLY", "true"));
 
     // Boost Configuration
     private static final boolean BOOST_ENABLED = Boolean.parseBoolean(System.getenv().getOrDefault("BOOST_ENABLED", "true"));
@@ -121,6 +121,7 @@ public class HumidityMonitor {
             server.createContext("/api/fan/udluftning", new UdluftningApiHandler());
             server.createContext("/api/fan/static", new StaticRpmApiHandler());
             server.createContext("/api/system/restart", new RestartApiHandler());
+            server.createContext("/api/system/mode", new SystemModeHandler());
             server.setExecutor(null);
             server.start();
             log("Web Dashboard started on port " + WEB_PORT);
@@ -129,23 +130,45 @@ public class HumidityMonitor {
         }
     }
 
+    private void sendJson(HttpExchange t, String json) throws IOException {
+        byte[] bytes = json.getBytes("UTF-8");
+        t.getResponseHeaders().add("Content-Type", "application/json");
+        t.sendResponseHeaders(200, bytes.length);
+        try (OutputStream os = t.getResponseBody()) { os.write(bytes); }
+    }
+
+    private void sendError(HttpExchange t, int code, String message) throws IOException {
+        String json = "{\"error\": \"" + message + "\"}";
+        byte[] bytes = json.getBytes("UTF-8");
+        t.getResponseHeaders().add("Content-Type", "application/json");
+        t.sendResponseHeaders(code, bytes.length);
+        try (OutputStream os = t.getResponseBody()) { os.write(bytes); }
+    }
+
+    private String getJsonValue(String json, String key, String defaultValue) {
+        try {
+            // Regex to find "key": value OR "key" : value (handles booleans, numbers, strings)
+            // This is a naive implementation but better than manual split logic
+            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("\"" + key + "\"\\s*:\\s*([^,}\\]]+)");
+            java.util.regex.Matcher matcher = pattern.matcher(json);
+            if (matcher.find()) {
+                return matcher.group(1).trim().replaceAll("\"", "");
+            }
+        } catch (Exception e) {}
+        return defaultValue;
+    }
+
     class LiveApiHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange t) throws IOException {
-            t.getResponseHeaders().add("Content-Type", "application/json");
-            
             // Effective speed: if RPM is 0, the fan is effectively off regardless of command
             int effectiveSpeed = (lastRpm < 100) ? 0 : currentFanSpeed;
             
             String json = String.format(
-                "{\"humidity\":%d, \"temp\":%.1f, \"rpm\":%d, \"fan_speed\":%d, \"commanded_speed\":%d, \"boost\":%b, \"static_mode\":%b, \"static_speed\":%d}",
-                lastHumidity, lastTemp, lastRpm, effectiveSpeed, currentFanSpeed, boostActive, staticRpmMode, staticRpmSpeed
+                "{\"humidity\":%d, \"temp\":%.1f, \"rpm\":%d, \"fan_speed\":%d, \"commanded_speed\":%d, \"boost\":%b, \"static_mode\":%b, \"static_speed\":%d, \"monitor_only\":%b}",
+                lastHumidity, lastTemp, lastRpm, effectiveSpeed, currentFanSpeed, boostActive, staticRpmMode, staticRpmSpeed, monitorOnly
             );
-
-            t.sendResponseHeaders(200, json.length());
-            try (OutputStream os = t.getResponseBody()) {
-                os.write(json.getBytes());
-            }
+            sendJson(t, json);
         }
     }
 
@@ -200,28 +223,66 @@ public class HumidityMonitor {
         @Override
         public void handle(HttpExchange t) throws IOException {
             t.getResponseHeaders().add("Content-Type", "application/json");
+
+            String query = t.getRequestURI().getQuery();
+            String range = "day"; // default
+            if (query != null) {
+                for (String part : query.split("&")) {
+                    String[] kv = part.split("=");
+                    if (kv.length == 2 && "range".equals(kv[0])) {
+                        range = kv[1];
+                    }
+                }
+            }
+
+            String timeFilter;
+            int step = 1;
+
+            switch (range) {
+                case "week":
+                    timeFilter = "-7 days";
+                    step = 20; // Downsample: ~10 min interval (assuming 30s poll)
+                    break;
+                case "month":
+                    timeFilter = "-30 days";
+                    step = 120; // Downsample: ~1 hour interval
+                    break;
+                case "day":
+                default:
+                    timeFilter = "-1 day";
+                    step = 1;
+                    break;
+            }
             
             StringBuilder json = new StringBuilder("[");
-            String sql = "SELECT timestamp, humidity, temp_supply, fan_rpm FROM humidity_readings ORDER BY timestamp DESC LIMIT 2880"; // Last 24h (30s intervals)
+            // Use datetime filter and sort ASC for chart
+            String sql = "SELECT timestamp, humidity, temp_supply, fan_rpm FROM humidity_readings " +
+                         "WHERE timestamp >= datetime('now', '" + timeFilter + "') " +
+                         "ORDER BY timestamp ASC";
 
             try (Connection conn = DriverManager.getConnection(DB_URL);
                  Statement stmt = conn.createStatement();
                  ResultSet rs = stmt.executeQuery(sql)) {
 
                 boolean first = true;
+                long counter = 0;
                 while (rs.next()) {
-                    if (!first) json.append(",");
-                    first = false;
-                    
-                    String ts = rs.getString("timestamp"); // SQLite returns string
-                    int humidity = rs.getInt("humidity");
-                    double temp = rs.getDouble("temp_supply");
-                    int rpm = rs.getInt("fan_rpm");
+                    // Simple downsampling
+                    if (counter % step == 0) {
+                        if (!first) json.append(",");
+                        first = false;
+                        
+                        String ts = rs.getString("timestamp"); // SQLite returns string
+                        int humidity = rs.getInt("humidity");
+                        double temp = rs.getDouble("temp_supply");
+                        int rpm = rs.getInt("fan_rpm");
 
-                    json.append(String.format(
-                        "{\"timestamp\":\"%s\", \"humidity\":%d, \"temp\":%.1f, \"rpm\":%d}",
-                        ts, humidity, temp, rpm
-                    ));
+                        json.append(String.format(
+                            "{\"timestamp\":\"%s\", \"humidity\":%d, \"temp\":%.1f, \"rpm\":%d}",
+                            ts, humidity, temp, rpm
+                        ));
+                    }
+                    counter++;
                 }
 
             } catch (Exception e) {
@@ -232,12 +293,7 @@ public class HumidityMonitor {
             }
 
             json.append("]");
-            String response = json.toString();
-            
-            t.sendResponseHeaders(200, response.length());
-            try (OutputStream os = t.getResponseBody()) {
-                os.write(response.getBytes());
-            }
+            sendJson(t, json.toString());
         }
     }
 
@@ -351,7 +407,7 @@ public class HumidityMonitor {
     }
 
     private void updateFanSpeed(int humidity, int currentRpm, int supplyDuty, boolean isDefrosting) {
-        if (MONITOR_ONLY) {
+        if (monitorOnly) {
             log("Monitor mode active. Recommended speed: " + NORMAL_SPEED + " (Reason: Monitor Only)");
             return;
         }
@@ -426,9 +482,7 @@ public class HumidityMonitor {
         @Override
         public void handle(HttpExchange t) throws IOException {
             if (!t.getRequestMethod().equalsIgnoreCase("POST")) {
-                 String response = "Method Not Allowed";
-                 t.sendResponseHeaders(405, response.length());
-                 try (OutputStream os = t.getResponseBody()) { os.write(response.getBytes()); }
+                 sendError(t, 405, "Method Not Allowed");
                  return;
             }
             
@@ -448,10 +502,33 @@ public class HumidityMonitor {
                  }
             }).start();
             
-            String json = "{\"status\": \"ok\", \"message\": \"Restart sequence initiated\"}";
-            t.getResponseHeaders().add("Content-Type", "application/json");
-            t.sendResponseHeaders(200, json.length());
-            try (OutputStream os = t.getResponseBody()) { os.write(json.getBytes()); }
+            sendJson(t, "{\"status\": \"ok\", \"message\": \"Restart sequence initiated\"}");
+        }
+    }
+
+    class SystemModeHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange t) throws IOException {
+            if (t.getRequestMethod().equalsIgnoreCase("POST")) {
+                 try {
+                     java.io.InputStream is = t.getRequestBody();
+                     String body = new String(is.readAllBytes());
+                     log("System Mode Request: " + body);
+                     
+                     String val = getJsonValue(body, "monitor_only", null);
+                     if (val != null) {
+                        monitorOnly = Boolean.parseBoolean(val);
+                        log("System Monitor Mode updated to: " + monitorOnly);
+                        sendJson(t, "{\"status\": \"ok\", \"monitor_only\": " + monitorOnly + "}");
+                     } else {
+                        sendError(t, 400, "Missing monitor_only parameter");
+                     }
+                 } catch (Exception e) {
+                     sendError(t, 500, e.getMessage());
+                 }
+            } else {
+                 sendError(t, 405, "Method Not Allowed");
+            }
         }
     }
 
@@ -530,30 +607,25 @@ public class HumidityMonitor {
         @Override
         public void handle(HttpExchange t) throws IOException {
             if (!t.getRequestMethod().equalsIgnoreCase("POST")) {
-                String response = "Method Not Allowed";
-                t.sendResponseHeaders(405, response.length());
-                try (OutputStream os = t.getResponseBody()) { os.write(response.getBytes()); }
+                sendError(t, 405, "Method Not Allowed");
                 return;
             }
 
             java.io.InputStream is = t.getRequestBody();
-            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
-            byte[] buf = new byte[1024];
-            int n;
-            while ((n = is.read(buf)) != -1) { baos.write(buf, 0, n); }
-            byte[] body = baos.toByteArray();
-            String payload = new String(body);
+            String payload = new String(is.readAllBytes());
+
             int level = NORMAL_SPEED;
             int durationMinutes = 30;
+            
+            String levelStr = getJsonValue(payload, "level", String.valueOf(NORMAL_SPEED));
+            String durationStr = getJsonValue(payload, "duration_minutes", "30");
+            
             try {
-                String p = payload.replaceAll("\\s", "");
-                if (p.contains("\"level\"")) {
-                    level = Integer.parseInt(p.split("\"level\":")[1].split("[,}]")[0]);
-                }
-                if (p.contains("\"duration_minutes\"")) {
-                    durationMinutes = Integer.parseInt(p.split("\"duration_minutes\":")[1].split("[,}]")[0]);
-                }
-            } catch (Exception e) {}
+                level = Integer.parseInt(levelStr);
+                durationMinutes = Integer.parseInt(durationStr);
+            } catch (NumberFormatException e) {
+                // Ignore, use defaults
+            }
 
             if (level < 0 || level > 4) level = NORMAL_SPEED;
             if (durationMinutes < 1) durationMinutes = 30;
@@ -570,9 +642,7 @@ public class HumidityMonitor {
             }
 
             String json = String.format("{\"ok\":true,\"level\":%d,\"minutes\":%d,\"until\":%d}", level, durationMinutes, manualOverrideEndTime);
-            t.getResponseHeaders().add("Content-Type", "application/json");
-            t.sendResponseHeaders(200, json.length());
-            try (OutputStream os = t.getResponseBody()) { os.write(json.getBytes()); }
+            sendJson(t, json);
         }
     }
 
@@ -581,41 +651,35 @@ public class HumidityMonitor {
         public void handle(HttpExchange t) throws IOException {
             if (t.getRequestMethod().equalsIgnoreCase("POST")) {
                 java.io.InputStream is = t.getRequestBody();
-                java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
-                byte[] buf = new byte[1024];
-                int n;
-                while ((n = is.read(buf)) != -1) { baos.write(buf, 0, n); }
-                String payload = new String(baos.toByteArray());
+                String payload = new String(is.readAllBytes());
                 
-                try {
-                    String p = payload.replaceAll("\\s", "");
-                    if (p.contains("\"enabled\":")) {
-                        staticRpmMode = Boolean.parseBoolean(p.split("\"enabled\":")[1].split("[,}]")[0]);
+                String enabledStr = getJsonValue(payload, "enabled", null);
+                String speedStr = getJsonValue(payload, "speed", null);
+                
+                if (enabledStr != null) {
+                    staticRpmMode = Boolean.parseBoolean(enabledStr);
+                }
+                if (speedStr != null) {
+                    try {
+                        staticRpmSpeed = Integer.parseInt(speedStr);
+                    } catch (NumberFormatException e) {}
+                }
+                
+                if (staticRpmMode) {
+                    try {
+                        client.setFanSpeed(staticRpmSpeed);
+                        currentFanSpeed = staticRpmSpeed;
+                        log("Static RPM Mode Activated: Speed " + staticRpmSpeed);
+                    } catch (Exception e) {
+                        logError("Failed to set fan speed for Static Mode: " + e.getMessage());
                     }
-                    if (p.contains("\"speed\":")) {
-                        staticRpmSpeed = Integer.parseInt(p.split("\"speed\":")[1].split("[,}]")[0]);
-                    }
-                    
-                    if (staticRpmMode) {
-                        try {
-                            client.setFanSpeed(staticRpmSpeed);
-                            currentFanSpeed = staticRpmSpeed;
-                            log("Static RPM Mode Activated: Speed " + staticRpmSpeed);
-                        } catch (Exception e) {
-                            logError("Failed to set fan speed for Static Mode: " + e.getMessage());
-                        }
-                    } else {
-                        log("Static RPM Mode Deactivated. Resuming auto control.");
-                    }
-                } catch (Exception e) {
-                    logError("Error parsing Static Mode payload: " + e.getMessage());
+                } else {
+                    log("Static RPM Mode Deactivated. Resuming auto control.");
                 }
             }
             
             String json = String.format("{\"enabled\":%b,\"speed\":%d}", staticRpmMode, staticRpmSpeed);
-            t.getResponseHeaders().add("Content-Type", "application/json");
-            t.sendResponseHeaders(200, json.length());
-            try (OutputStream os = t.getResponseBody()) { os.write(json.getBytes()); }
+            sendJson(t, json);
         }
     }
 

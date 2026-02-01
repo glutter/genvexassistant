@@ -47,8 +47,18 @@
         
         button, select { padding: 12px 20px; cursor: pointer; background: var(--button-bg); color: white; border: none; border-radius: 6px; font-size: 1rem; font-weight: 500; transition: background 0.2s; }
         button:hover { background: var(--button-hover); }
-        select { background: var(--card-bg); color: var(--text-color); border: 1px solid #444; flex-grow: 1; }
+        select { background: var(--card-bg); color: var(--text-color); border: 1px solid #444; flex-grow: 1; padding: 12px; border-radius: 6px; }
         button.action-btn { flex-grow: 2; }
+        
+        .quick-actions { display: flex; gap: 10px; margin-top: 10px; width: 100%; }
+        .quick-btn { flex: 1; background: var(--card-bg); border: 1px solid var(--button-bg); color: var(--text-color); font-size: 0.9em; padding: 8px; }
+        .quick-btn:hover { background: var(--button-bg); color: white; }
+
+        /* Range Buttons */
+        .range-controls { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 10px; }
+        .range-btn { padding: 6px 12px; font-size: 0.9rem; background: var(--card-bg); border: 1px solid #444; color: var(--secondary-text); }
+        .range-btn:hover { background: #333; }
+        .range-btn.active { background: var(--button-bg); color: white; border-color: var(--button-bg); }
 
         /* Chart */
         .chart-container { position: relative; height: 400px; width: 100%; }
@@ -69,6 +79,15 @@
             .control-group { flex-direction: column; }
             .data-value { font-size: 1.5em; }
         }
+
+        /* Toggle Switch */
+        .switch { position: relative; display: inline-block; width: 50px; height: 24px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 34px; }
+        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: var(--success-color); }
+        input:focus + .slider { box-shadow: 0 0 1px var(--success-color); }
+        input:checked + .slider:before { transform: translateX(26px); }
     </style>
 </head>
 <body>
@@ -102,7 +121,25 @@
         </div>
 
         <div class="control-card">
-            <div class="control-title"><i class="fas fa-wind"></i> Manual Ventilation (Udluftning)</div>
+            <div class="control-title"><i class="fas fa-robot"></i> Operation Mode</div>
+            <p style="font-size: 0.85em; color: var(--secondary-text); margin: 0 0 15px 0; text-align: center;">
+                Determine if the system should actively control the fans or just observe.
+            </p>
+            <div class="control-group" style="justify-content: center;">
+                <label style="display: flex; align-items: center; gap: 15px; cursor: pointer;">
+                    <span style="font-size: 0.9em;">Control Active</span>
+                    <div class="switch">
+                        <input type="checkbox" id="monitor-only-switch" onchange="toggleSystemMode()">
+                        <span class="slider"></span>
+                    </div>
+                    <span style="font-size: 0.9em;">Monitor Only</span>
+                </label>
+            </div>
+             <div id="mode-status-text" style="font-size: 0.8rem; color: var(--accent-color); font-weight: 600;">...</div>
+        </div>
+
+        <div class="control-card">
+            <div class="control-title"><i class="fas fa-wind"></i> Manual Ventilation</div>
             <div class="control-group">
                 <select id="udluftning-level">
                     <option value="1">Speed 1 (Low)</option>
@@ -110,8 +147,19 @@
                     <option value="3" selected>Speed 3 (Boost)</option>
                     <option value="4">Speed 4 (Max)</option>
                 </select>
-                <button class="action-btn" onclick="triggerUdluftning()">Start (30m)</button>
+                <button class="action-btn" onclick="triggerUdluftning()">Start Custom</button>
             </div>
+            <div class="quick-actions">
+                <button class="quick-btn" onclick="triggerQuickBoost(30)">Boost 30m</button>
+                <button class="quick-btn" onclick="triggerQuickBoost(60)">Boost 1h</button>
+                <button class="quick-btn" onclick="triggerQuickBoost(120)">Boost 2h</button>
+            </div>
+        </div>
+
+        <div class="range-controls">
+            <button class="range-btn active" onclick="setRange('day')" id="btn-day">Day</button>
+            <button class="range-btn" onclick="setRange('week')" id="btn-week">Week</button>
+            <button class="range-btn" onclick="setRange('month')" id="btn-month">Month</button>
         </div>
 
         <div class="chart-container">
@@ -147,6 +195,14 @@
 
     <script>
         let chart;
+        let currentRange = 'day';
+
+        function setRange(range) {
+            currentRange = range;
+            document.querySelectorAll('.range-btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById('btn-' + range).classList.add('active');
+            fetchData();
+        }
 
         function showToast(message, type = 'success') {
             const toast = document.getElementById("toast");
@@ -169,7 +225,7 @@
                 }
 
                 // Fetch History Data
-                const response = await fetch('api/history');
+                const response = await fetch('api/history?range=' + currentRange);
                 const data = await response.json();
                 
                 updateChart(data);
@@ -190,6 +246,22 @@
             // Update Static Control UI
             document.getElementById('static-mode-enabled').checked = data.static_mode;
             document.getElementById('static-speed').value = data.static_speed;
+            
+            // Update System Mode UI
+            const monitorSwitch = document.getElementById('monitor-only-switch');
+            // Check if user is interacting with it to avoid jitter? No, just update it.
+            // If the user just clicked it, fetchData might overwrite it before the POST returns, 
+            // but the POST should trigger a refresh or return quickly.
+            monitorSwitch.checked = data.monitor_only;
+            
+            const modeText = document.getElementById('mode-status-text');
+            if (data.monitor_only) {
+                modeText.textContent = "System is in PASSIVE MONITORING mode.";
+                modeText.style.color = "#bb86fc"; 
+            } else {
+                modeText.textContent = "System has ACTIVE CONTROL enabled.";
+                modeText.style.color = "#03dac6";
+            }
         }
 
         function updateChart(data) {
@@ -262,10 +334,12 @@
                         x: {
                             type: 'time',
                             time: {
-                                unit: 'minute',
                                 displayFormats: {
-                                    minute: 'HH:mm'
-                                }
+                                    minute: 'HH:mm',
+                                    hour: 'DD/MM HH:mm',
+                                    day: 'MMM D'
+                                },
+                                tooltipFormat: 'MMM D, HH:mm'
                             },
                             title: {
                                 display: true,
@@ -311,19 +385,27 @@
         // Auto refresh every 30s
         setInterval(fetchData, 30000);
 
-        async function triggerUdluftning() {
+        async function triggerQuickBoost(minutes) {
+             // Default to Speed 3 for quick boost
+             document.getElementById('udluftning-level').value = "3"; 
+             await triggerUdluftning(minutes);
+        }
+
+        async function triggerUdluftning(minutesOverride = null) {
             const level = parseInt(document.getElementById('udluftning-level').value);
-            const btn = document.querySelector('.action-btn');
-            const originalText = btn.textContent;
-            
-            btn.textContent = 'Sending...';
-            btn.disabled = true;
+            // If explicit minutes passed, use it, otherwise default to 30 (or whatever UI logic)
+            // But wait, the original code hardcoded 30. Let's fix that.
+            let minutes = minutesOverride;
+            if (!minutes) minutes = 30;
+
+            const btns = document.querySelectorAll('button');
+            btns.forEach(b => b.disabled = true); // Disable all buttons to prevent spam
 
             try {
                 const res = await fetch('api/fan/udluftning', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ level: level, duration_minutes: 30 })
+                    headers: { 'Content-Type': 'text/plain' }, // Send simplistic payload for our new parser
+                    body: JSON.stringify({ level: level, duration_minutes: minutes })
                 });
                 if (res.ok) {
                     const data = await res.json();
@@ -335,8 +417,7 @@
             } catch (e) {
                 showToast('❌ Error: ' + e.message, 'error');
             } finally {
-                btn.textContent = originalText;
-                btn.disabled = false;
+                btns.forEach(b => b.disabled = false);
             }
         }
 
@@ -376,6 +457,31 @@
                 }
             } catch (e) {
                 showToast('❌ Error: ' + e.message, 'error');
+            }
+        }
+
+        async function toggleSystemMode() {
+            const monitorOnly = document.getElementById('monitor-only-switch').checked;
+            
+            try {
+                const res = await fetch('api/system/mode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ monitor_only: monitorOnly })
+                });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    showToast(data.monitor_only ? '👁️ Monitoring Mode Active' : '🤖 Control Mode Active', 'success');
+                    fetchData(); // Refresh UI
+                } else {
+                    showToast('❌ Failed to change mode', 'error');
+                    // Revert switch
+                    document.getElementById('monitor-only-switch').checked = !monitorOnly;
+                }
+            } catch (e) {
+                showToast('❌ Error: ' + e.message, 'error');
+                document.getElementById('monitor-only-switch').checked = !monitorOnly;
             }
         }
     </script>

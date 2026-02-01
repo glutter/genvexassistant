@@ -1,6 +1,14 @@
 # Changelog
 
-## 1.33
+## 1.38
+
+- **Historical Data View**: Added daily, weekly, and monthly chart views with smart downsampling.
+- **Control Mode Toggle**: Added a runtime switch to toggle between "Active Control" and "Monitor Only" modes.
+- **UI UX Improvements**: Added quick-action buttons for 30m, 1h, and 2h manual boost.
+- **Backend Optimization**: Refactored API handlers for better JSON parsing and reduced duplication.
+
+## 1.37
+
 
 - Added **Static RPM Mode**: Manual override to set a fixed fan speed that bypasses humidity-based control.
 - Extended data retention period from 14 days to **1 month**.
