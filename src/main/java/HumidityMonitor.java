@@ -69,6 +69,9 @@ public class HumidityMonitor {
     private volatile boolean manualOverrideActive = false;
     private volatile long manualOverrideEndTime = 0;
     private volatile int manualOverrideSpeed = -1;
+    // Static RPM Mode
+    private volatile boolean staticRpmMode = false;
+    private volatile int staticRpmSpeed = 2;
 
     public HumidityMonitor(String ip, String email) {
         this.client = new GenvexClient(ip, email);
@@ -115,8 +118,12 @@ public class HumidityMonitor {
             server.createContext("/api/history", new HistoryApiHandler());
             server.createContext("/api/live", new LiveApiHandler());
             server.createContext("/api/fan/udluftning", new UdluftningApiHandler());
+<<<<<<< HEAD
             // New Restart Handler
             server.createContext("/api/system/restart", new RestartApiHandler());
+=======
+            server.createContext("/api/fan/static", new StaticRpmApiHandler());
+>>>>>>> 8bfd78e2006da5ca71a00d60c9c59c923a68b373
             server.setExecutor(null);
             server.start();
             log("Web Dashboard started on port " + WEB_PORT);
@@ -131,8 +138,8 @@ public class HumidityMonitor {
             t.getResponseHeaders().add("Content-Type", "application/json");
             
             String json = String.format(
-                "{\"humidity\":%d, \"temp\":%.1f, \"rpm\":%d, \"fan_speed\":%d, \"boost\":%b}",
-                lastHumidity, lastTemp, lastRpm, currentFanSpeed, boostActive
+                "{\"humidity\":%d, \"temp\":%.1f, \"rpm\":%d, \"fan_speed\":%d, \"boost\":%b, \"static_mode\":%b, \"static_speed\":%d}",
+                lastHumidity, lastTemp, lastRpm, currentFanSpeed, boostActive, staticRpmMode, staticRpmSpeed
             );
 
             t.sendResponseHeaders(200, json.length());
@@ -353,7 +360,12 @@ public class HumidityMonitor {
         // Manual override takes precedence over everything
         if (manualOverrideActive && System.currentTimeMillis() < manualOverrideEndTime) {
             targetSpeed = manualOverrideSpeed;
+<<<<<<< HEAD
             reason = "Manual Override";
+=======
+        } else if (staticRpmMode) {
+            targetSpeed = staticRpmSpeed;
+>>>>>>> 8bfd78e2006da5ca71a00d60c9c59c923a68b373
         } else if (boostActive) {
             targetSpeed = BOOST_SPEED;
             reason = "Boost";
@@ -444,6 +456,7 @@ public class HumidityMonitor {
     }
 
     private void checkBoostLogic(int currentHumidity) {
+        if (staticRpmMode) return; // Skip boost logic if static mode is active
         if (lastHumidity == -1) return; // First run, can't calculate delta
 
         long now = System.currentTimeMillis();
@@ -533,22 +546,14 @@ public class HumidityMonitor {
             int level = NORMAL_SPEED;
             int durationMinutes = 30;
             try {
-                // Very simple JSON parsing without external libs
-                // Expecting: {"level":2,"duration_minutes":30}
                 String p = payload.replaceAll("\\s", "");
                 if (p.contains("\"level\"")) {
-                    String part = p.split("\"level\":")[1];
-                    String num = part.split("[,}]")[0];
-                    level = Integer.parseInt(num);
+                    level = Integer.parseInt(p.split("\"level\":")[1].split("[,}]")[0]);
                 }
                 if (p.contains("\"duration_minutes\"")) {
-                    String part = p.split("\"duration_minutes\":")[1];
-                    String num = part.split("[,}]")[0];
-                    durationMinutes = Integer.parseInt(num);
+                    durationMinutes = Integer.parseInt(p.split("\"duration_minutes\":")[1].split("[,}]")[0]);
                 }
-            } catch (Exception e) {
-                // Use defaults if parsing fails
-            }
+            } catch (Exception e) {}
 
             if (level < 0 || level > 4) level = NORMAL_SPEED;
             if (durationMinutes < 1) durationMinutes = 30;
@@ -565,6 +570,49 @@ public class HumidityMonitor {
             }
 
             String json = String.format("{\"ok\":true,\"level\":%d,\"minutes\":%d,\"until\":%d}", level, durationMinutes, manualOverrideEndTime);
+            t.getResponseHeaders().add("Content-Type", "application/json");
+            t.sendResponseHeaders(200, json.length());
+            try (OutputStream os = t.getResponseBody()) { os.write(json.getBytes()); }
+        }
+    }
+
+    class StaticRpmApiHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange t) throws IOException {
+            if (t.getRequestMethod().equalsIgnoreCase("POST")) {
+                java.io.InputStream is = t.getRequestBody();
+                java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[1024];
+                int n;
+                while ((n = is.read(buf)) != -1) { baos.write(buf, 0, n); }
+                String payload = new String(baos.toByteArray());
+                
+                try {
+                    String p = payload.replaceAll("\\s", "");
+                    if (p.contains("\"enabled\":")) {
+                        staticRpmMode = Boolean.parseBoolean(p.split("\"enabled\":")[1].split("[,}]")[0]);
+                    }
+                    if (p.contains("\"speed\":")) {
+                        staticRpmSpeed = Integer.parseInt(p.split("\"speed\":")[1].split("[,}]")[0]);
+                    }
+                    
+                    if (staticRpmMode) {
+                        try {
+                            client.setFanSpeed(staticRpmSpeed);
+                            currentFanSpeed = staticRpmSpeed;
+                            log("Static RPM Mode Activated: Speed " + staticRpmSpeed);
+                        } catch (Exception e) {
+                            logError("Failed to set fan speed for Static Mode: " + e.getMessage());
+                        }
+                    } else {
+                        log("Static RPM Mode Deactivated. Resuming auto control.");
+                    }
+                } catch (Exception e) {
+                    logError("Error parsing Static Mode payload: " + e.getMessage());
+                }
+            }
+            
+            String json = String.format("{\"enabled\":%b,\"speed\":%d}", staticRpmMode, staticRpmSpeed);
             t.getResponseHeaders().add("Content-Type", "application/json");
             t.sendResponseHeaders(200, json.length());
             try (OutputStream os = t.getResponseBody()) { os.write(json.getBytes()); }
@@ -600,7 +648,8 @@ public class HumidityMonitor {
     }
 
     private void cleanupOldData() {
-        String sql = "DELETE FROM humidity_readings WHERE timestamp < datetime('now', '-14 days')";
+        // Retention period: 1 month
+        String sql = "DELETE FROM humidity_readings WHERE timestamp < datetime('now', '-1 month')";
         
         try (Connection conn = DriverManager.getConnection(DB_URL);
              PreparedStatement pstmt = conn.prepareStatement(sql)) {

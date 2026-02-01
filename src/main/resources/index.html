@@ -117,6 +117,23 @@
         <div class="chart-container">
             <canvas id="mainChart"></canvas>
         </div>
+
+        <div class="control-card">
+            <div class="control-title"><i class="fas fa-cog"></i> Static RPM Mode</div>
+            <p style="font-size: 0.85em; color: var(--secondary-text); margin: 0 0 10px 0;">Overrides humidity control but not Udluftning.</p>
+            <div class="control-group">
+                <label style="display: flex; align-items: center; gap: 8px; color: var(--text-color);">
+                    <input type="checkbox" id="static-mode-enabled" onchange="updateStaticMode()"> Enable
+                </label>
+                <select id="static-speed">
+                    <option value="1">Speed 1</option>
+                    <option value="2">Speed 2</option>
+                    <option value="3">Speed 3</option>
+                    <option value="4">Speed 4</option>
+                </select>
+                <button onclick="updateStaticMode()">Update</button>
+            </div>
+        </div>
     </div>
 
     <div id="toast">Notification</div>
@@ -162,6 +179,10 @@
             document.getElementById('live-temp').textContent = data.temp.toFixed(1) + '°C';
             document.getElementById('live-rpm').textContent = data.rpm;
             document.getElementById('live-speed').textContent = data.fan_speed;
+
+            // Update Static Control UI
+            document.getElementById('static-mode-enabled').checked = data.static_mode;
+            document.getElementById('static-speed').value = data.static_speed;
         }
 
         function updateChart(data) {
@@ -309,6 +330,29 @@
             } finally {
                 btn.textContent = originalText;
                 btn.disabled = false;
+            }
+        }
+
+        async function updateStaticMode() {
+            const enabled = document.getElementById('static-mode-enabled').checked;
+            const speed = parseInt(document.getElementById('static-speed').value);
+            
+            try {
+                const res = await fetch('api/fan/static', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: enabled, speed: speed })
+                });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    console.log("Static mode updated:", data);
+                    fetchData(); // Refresh UI
+                } else {
+                    alert('Failed to update static mode');
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
             }
         }
     </script>

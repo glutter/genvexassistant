@@ -28,7 +28,7 @@ public class GenvexClient {
 
     public void connect() throws IOException, InterruptedException {
         socket = new DatagramSocket();
-        socket.setSoTimeout(5000);
+        socket.setSoTimeout(2500); // Optimized timeout (was 5000)
         address = InetAddress.getByName(ipAddress);
 
         // Generate Client ID
@@ -80,7 +80,8 @@ public class GenvexClient {
         if (!connected) throw new IOException("Not connected");
         
         byte[] cmd = buildDatapointReadCommand(addr);
-        byte[] response = sendPacketAndWaitForResponse(sequenceId++, cmd, 3);
+        // Increased retries to 5 for better stability
+        byte[] response = sendPacketAndWaitForResponse(sequenceId++, cmd, 5);
         
         if (response != null && response.length >= 4) {
             int val = ((response[2] & 0xFF) << 8) | (response[3] & 0xFF);
@@ -97,7 +98,7 @@ public class GenvexClient {
 
         System.out.println("GenvexClient: Setting fan speed to " + speed);
         byte[] cmd = buildSetpointWriteCommand(24, speed);
-        byte[] response = sendPacketAndWaitForResponse(sequenceId++, cmd, 3);
+        byte[] response = sendPacketAndWaitForResponse(sequenceId++, cmd, 5);
         
         if (response == null) {
              System.err.println("GenvexClient: Failed to set fan speed (no response)");
