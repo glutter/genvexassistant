@@ -118,12 +118,8 @@ public class HumidityMonitor {
             server.createContext("/api/history", new HistoryApiHandler());
             server.createContext("/api/live", new LiveApiHandler());
             server.createContext("/api/fan/udluftning", new UdluftningApiHandler());
-<<<<<<< HEAD
-            // New Restart Handler
-            server.createContext("/api/system/restart", new RestartApiHandler());
-=======
             server.createContext("/api/fan/static", new StaticRpmApiHandler());
->>>>>>> 8bfd78e2006da5ca71a00d60c9c59c923a68b373
+            server.createContext("/api/system/restart", new RestartApiHandler());
             server.setExecutor(null);
             server.start();
             log("Web Dashboard started on port " + WEB_PORT);
@@ -241,15 +237,19 @@ public class HumidityMonitor {
         }
     }
 
+    private void pollAndStore() {
+        try {
+            // Always reconnect before polling to avoid stale UDP sessions
+            if (client.isConnected()) {
+                client.disconnect();
+            }
+            client.connect();
 
-    // ... within pollAndStore ...
             int humidity = client.readDatapoint(26);
             int tempSupplyRaw = client.readDatapoint(20);
             int supplyRpm = client.readDatapoint(35);
-            int supplyDuty = client.readDatapoint(18); // Reading Duty (18) is more reliable
-            int extractRpm = client.readDatapoint(36); // Read Extract RPM for defrost check
-            
-            // Read "Mode" if possible, but we don't know the address for sure.
+            int supplyDuty = client.readDatapoint(18);
+            int extractRpm = client.readDatapoint(36);
 
             log("Polled Data: Humidity=" + humidity + "%, TempRaw=" + tempSupplyRaw + 
                 ", SupplyRPM=" + supplyRpm + ", SupplyDuty=" + supplyDuty + ", ExtractRPM=" + extractRpm);
@@ -258,22 +258,15 @@ public class HumidityMonitor {
                 throw new IOException("Failed to read datapoints (returned -1)");
             }
 
-            // ... (rest of temp formatting)
             int tempSupplyOffsetRaw = Integer.parseInt(System.getenv().getOrDefault("TEMP_SUPPLY_OFFSET_RAW", "-300"));
             double tempSupply = (tempSupplyRaw + tempSupplyOffsetRaw) / 10.0;
 
             // Defrost Detection
-            // If Supply RPM is 0 (or close) BUT Extract RPM is running normal speed (> 500?), 
-            // and we commanded speed > 0, then we are likely in defrost.
             boolean isDefrosting = false;
-            // Duty cycle 18 is usually around 3000-5000 for speeds 1-2. 0 implies off.
-            // If Duty is 0, the controller has decided to turn off the fan.
-            
-             if (supplyRpm < 100 && extractRpm > 500 && tempSupply < 10.0) {
-                 isDefrosting = true;
-                 log("STATUS: Unit appears to be in DEFROST/ANTI-ICE mode (Supply Off, Extract On, Low Temp).");
-                 // In this state, we should probably NOT force updates, or at least understand why they fail.
-             }
+            if (supplyRpm < 100 && extractRpm > 500 && tempSupply < 10.0) {
+                isDefrosting = true;
+                log("STATUS: Unit appears to be in DEFROST/ANTI-ICE mode (Supply Off, Extract On, Low Temp).");
+            }
 
             // Check for boost conditions
             if (BOOST_ENABLED) {
@@ -360,12 +353,10 @@ public class HumidityMonitor {
         // Manual override takes precedence over everything
         if (manualOverrideActive && System.currentTimeMillis() < manualOverrideEndTime) {
             targetSpeed = manualOverrideSpeed;
-<<<<<<< HEAD
             reason = "Manual Override";
-=======
         } else if (staticRpmMode) {
             targetSpeed = staticRpmSpeed;
->>>>>>> 8bfd78e2006da5ca71a00d60c9c59c923a68b373
+            reason = "Static RPM Mode";
         } else if (boostActive) {
             targetSpeed = BOOST_SPEED;
             reason = "Boost";
