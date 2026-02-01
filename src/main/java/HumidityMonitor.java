@@ -130,14 +130,14 @@ public class HumidityMonitor {
         }
     }
 
-    private void sendJson(HttpExchange t, String json) throws IOException {
+    private static void sendJson(HttpExchange t, String json) throws IOException {
         byte[] bytes = json.getBytes("UTF-8");
         t.getResponseHeaders().add("Content-Type", "application/json");
         t.sendResponseHeaders(200, bytes.length);
         try (OutputStream os = t.getResponseBody()) { os.write(bytes); }
     }
 
-    private void sendError(HttpExchange t, int code, String message) throws IOException {
+    private static void sendError(HttpExchange t, int code, String message) throws IOException {
         String json = "{\"error\": \"" + message + "\"}";
         byte[] bytes = json.getBytes("UTF-8");
         t.getResponseHeaders().add("Content-Type", "application/json");
@@ -145,7 +145,7 @@ public class HumidityMonitor {
         try (OutputStream os = t.getResponseBody()) { os.write(bytes); }
     }
 
-    private String getJsonValue(String json, String key, String defaultValue) {
+    private static String getJsonValue(String json, String key, String defaultValue) {
         try {
             // Regex to find "key": value OR "key" : value (handles booleans, numbers, strings)
             // This is a naive implementation but better than manual split logic
