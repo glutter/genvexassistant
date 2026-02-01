@@ -83,8 +83,11 @@ public class GenvexClient {
         byte[] response = sendPacketAndWaitForResponse(sequenceId++, cmd, 3);
         
         if (response != null && response.length >= 4) {
-            return ((response[2] & 0xFF) << 8) | (response[3] & 0xFF);
+            int val = ((response[2] & 0xFF) << 8) | (response[3] & 0xFF);
+            // System.out.println("Read Datapoint " + addr + ": " + val); 
+            return val;
         }
+        System.err.println("Read Datapoint " + addr + " failed: Response null or short");
         return -1;
     }
 
@@ -92,8 +95,16 @@ public class GenvexClient {
         if (!connected) throw new IOException("Not connected");
         if (speed < 0 || speed > 4) throw new IllegalArgumentException("Speed must be 0-4");
 
+        System.out.println("GenvexClient: Setting fan speed to " + speed);
         byte[] cmd = buildSetpointWriteCommand(24, speed);
-        sendPacketAndWaitForResponse(sequenceId++, cmd, 3);
+        byte[] response = sendPacketAndWaitForResponse(sequenceId++, cmd, 3);
+        
+        if (response == null) {
+             System.err.println("GenvexClient: Failed to set fan speed (no response)");
+        } else {
+             // We could check response content if we knew the format, likely an echo or success code
+             System.out.println("GenvexClient: Set fan speed command sent, response received (len=" + response.length + ")");
+        }
     }
 
     // --- Private Helpers ---

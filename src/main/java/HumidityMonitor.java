@@ -115,6 +115,8 @@ public class HumidityMonitor {
             server.createContext("/api/history", new HistoryApiHandler());
             server.createContext("/api/live", new LiveApiHandler());
             server.createContext("/api/fan/udluftning", new UdluftningApiHandler());
+            // New Restart Handler
+            server.createContext("/api/system/restart", new RestartApiHandler());
             server.setExecutor(null);
             server.start();
             log("Web Dashboard started on port " + WEB_PORT);
@@ -232,56 +234,67 @@ public class HumidityMonitor {
         }
     }
 
-    private void pollAndStore() {
-        try {
-            // Always reconnect before polling to avoid stale UDP sessions
-            // The Genvex unit tends to drop connections after ~60 seconds of inactivity
-            if (client.isConnected()) {
-                client.disconnect();
-            }
-            client.connect();
 
+    // ... within pollAndStore ...
             int humidity = client.readDatapoint(26);
             int tempSupplyRaw = client.readDatapoint(20);
-            int rpm = client.readDatapoint(35);
+            int supplyRpm = client.readDatapoint(35);
+            int supplyDuty = client.readDatapoint(18); // Reading Duty (18) is more reliable
+            int extractRpm = client.readDatapoint(36); // Read Extract RPM for defrost check
+            
+            // Read "Mode" if possible, but we don't know the address for sure.
 
-            if (humidity == -1 || tempSupplyRaw == -1 || rpm == -1) {
+            log("Polled Data: Humidity=" + humidity + "%, TempRaw=" + tempSupplyRaw + 
+                ", SupplyRPM=" + supplyRpm + ", SupplyDuty=" + supplyDuty + ", ExtractRPM=" + extractRpm);
+
+            if (humidity == -1 || tempSupplyRaw == -1 || supplyRpm == -1) {
                 throw new IOException("Failed to read datapoints (returned -1)");
             }
 
-            // We don't have a direct "Fan Speed Level" read, so we might infer it or leave null
-            // For now, we'll just store what we know.
-            
-            // Optima 270 temperature offset: raw values include +300 (i.e., +30.0C)
-            // Reference: `reference/temp_genvex_nabto/src/genvexnabto/models/optima270.py` uses offset -300 with divider 10
-            // Apply configurable offset via env var, defaulting to -300 for Optima 270
+            // ... (rest of temp formatting)
             int tempSupplyOffsetRaw = Integer.parseInt(System.getenv().getOrDefault("TEMP_SUPPLY_OFFSET_RAW", "-300"));
             double tempSupply = (tempSupplyRaw + tempSupplyOffsetRaw) / 10.0;
+
+            // Defrost Detection
+            // If Supply RPM is 0 (or close) BUT Extract RPM is running normal speed (> 500?), 
+            // and we commanded speed > 0, then we are likely in defrost.
+            boolean isDefrosting = false;
+            // Duty cycle 18 is usually around 3000-5000 for speeds 1-2. 0 implies off.
+            // If Duty is 0, the controller has decided to turn off the fan.
+            
+             if (supplyRpm < 100 && extractRpm > 500 && tempSupply < 10.0) {
+                 isDefrosting = true;
+                 log("STATUS: Unit appears to be in DEFROST/ANTI-ICE mode (Supply Off, Extract On, Low Temp).");
+                 // In this state, we should probably NOT force updates, or at least understand why they fail.
+             }
 
             // Check for boost conditions
             if (BOOST_ENABLED) {
                 checkBoostLogic(humidity);
             }
             
-            // Apply Fan Speed Control (Boost, Night Mode, or General Humidity)
-            updateFanSpeed(humidity);
+            // Apply Fan Speed Control
+            updateFanSpeed(humidity, supplyRpm, supplyDuty, isDefrosting);
 
             lastHumidity = humidity;
             lastHumidityTime = System.currentTimeMillis();
             lastTemp = tempSupply;
-            lastRpm = rpm;
+            lastRpm = supplyRpm;
 
-            if (saveToDatabase(humidity, tempSupply, rpm)) {
-                log("Logged: Humidity=" + humidity + "%, Temp=" + tempSupply + "C, RPM=" + rpm + (boostActive ? " [BOOST ACTIVE]" : ""));
+            if (saveToDatabase(humidity, tempSupply, supplyRpm)) {
+                log("Logged: Humidity=" + humidity + "%, Temp=" + tempSupply + "C, RPM=" + supplyRpm + 
+                    (boostActive ? " [BOOST ACTIVE]" : "") + (isDefrosting ? " [DEFROSTING]" : ""));
             } else {
-                log("Read (Not Logged): Humidity=" + humidity + "%, Temp=" + tempSupply + "C, RPM=" + rpm + (boostActive ? " [BOOST ACTIVE]" : ""));
+                log("Read (Not Logged): Humidity=" + humidity + "%, Temp=" + tempSupply + "C, RPM=" + supplyRpm + 
+                    (boostActive ? " [BOOST ACTIVE]" : "") + (isDefrosting ? " [DEFROSTING]" : ""));
             }
             
             // Update Home Assistant
-            updateHomeAssistant(humidity, tempSupply, rpm, currentFanSpeed);
+            updateHomeAssistant(humidity, tempSupply, supplyRpm, currentFanSpeed);
 
         } catch (Exception e) {
             logError("Error polling data: " + e.getMessage());
+            e.printStackTrace(); 
             // Try to reconnect next time
             client.disconnect();
         }
@@ -333,44 +346,100 @@ public class HumidityMonitor {
         }
     }
 
-    private void updateFanSpeed(int humidity) {
+    private void updateFanSpeed(int humidity, int currentRpm, int supplyDuty, boolean isDefrosting) {
         int targetSpeed = NORMAL_SPEED;
+        String reason = "Normal";
 
         // Manual override takes precedence over everything
         if (manualOverrideActive && System.currentTimeMillis() < manualOverrideEndTime) {
             targetSpeed = manualOverrideSpeed;
+            reason = "Manual Override";
         } else if (boostActive) {
             targetSpeed = BOOST_SPEED;
+            reason = "Boost";
         } else {
             LocalTime now = LocalTime.now();
             boolean isNight = now.isAfter(NIGHT_START) || now.isBefore(NIGHT_END);
 
             if (isNight) {
                 targetSpeed = 1; // Night Mode (Lowest speed)
+                reason = "Night Mode";
             } else {
                 // General Humidity Control
-                // >= 80 -> Speed 3 (Boost)
-                // >= 65 -> Speed 2 (Normal)
-                // < 65  -> Speed 1 (Low)
-                
                 if (humidity >= HUMIDITY_VERY_HIGH_THRESHOLD) {
                     targetSpeed = 3;
+                    reason = "Humidity Very High";
                 } else if (humidity >= HUMIDITY_HIGH_THRESHOLD) {
                     targetSpeed = 2;
+                    reason = "Humidity High";
                 } else {
                     targetSpeed = 1;
+                    reason = "Humidity Low";
                 }
             }
         }
+        
+        boolean forceUpdate = false;
+        
+        // Logic:
+        // If we are in Defrost mode, the unit will override our setting (making RPM 0).
+        // Sending commands might be futile or fighting the controller.
+        // However, we should ensure the controller at least *knows* we want speed X, so if it exits defrost, it returns to X.
+        
+        // Critical Fix: check supplyDuty because that tells us what the controller is *trying* to do.
+        // Identify "Stopped but commanded ON"
+        // If target > 0, but Supply Duty is 0 (Off), then the controller thinks it should be OFF.
+        // This is where we need to force it.
+        if (targetSpeed > 0 && supplyDuty == 0 && !isDefrosting) {
+            log("CRITICAL: Fan Duty is 0 (OFF) but target is " + targetSpeed + ". Forcing speed update.");
+            forceUpdate = true;
+        }
 
-        if (targetSpeed != currentFanSpeed) {
-            try {
-                log("Adjusting Fan Speed: " + currentFanSpeed + " -> " + targetSpeed);
-                client.setFanSpeed(targetSpeed);
-                currentFanSpeed = targetSpeed;
-            } catch (Exception e) {
-                logError("Failed to set fan speed: " + e.getMessage());
+        if (targetSpeed != currentFanSpeed || forceUpdate) {
+            if (isDefrosting) {
+                 log("Defrost active. Not forcing fan speed update to avoid fighting controller.");
+            } else {
+                try {
+                    log("Adjusting Fan Speed: " + currentFanSpeed + " -> " + targetSpeed + " (Reason: " + reason + ", Force: " + forceUpdate + ")");
+                    client.setFanSpeed(targetSpeed);
+                    currentFanSpeed = targetSpeed;
+                } catch (Exception e) {
+                    logError("Failed to set fan speed: " + e.getMessage());
+                }
             }
+        }
+    }
+    
+    class RestartApiHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange t) throws IOException {
+            if (!t.getRequestMethod().equalsIgnoreCase("POST")) {
+                 String response = "Method Not Allowed";
+                 t.sendResponseHeaders(405, response.length());
+                 try (OutputStream os = t.getResponseBody()) { os.write(response.getBytes()); }
+                 return;
+            }
+            
+            log("Received SYSTEM RESTART command.");
+            
+            new Thread(() -> {
+                 try {
+                     log("Restart sequence: Setting fan to 0...");
+                     client.setFanSpeed(0);
+                     Thread.sleep(5000);
+                     log("Restart sequence: Setting fan to 1...");
+                     client.setFanSpeed(1);
+                     Thread.sleep(5000);
+                     log("Restart sequence complete.");
+                 } catch (Exception e) {
+                     logError("Restart sequence failed: " + e.getMessage());
+                 }
+            }).start();
+            
+            String json = "{\"status\": \"ok\", \"message\": \"Restart sequence initiated\"}";
+            t.getResponseHeaders().add("Content-Type", "application/json");
+            t.sendResponseHeaders(200, json.length());
+            try (OutputStream os = t.getResponseBody()) { os.write(json.getBytes()); }
         }
     }
 
