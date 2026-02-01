@@ -134,6 +134,13 @@
                 <button onclick="updateStaticMode()">Update</button>
             </div>
         </div>
+
+        <div class="control-card" style="border-color: var(--error-color); background: rgba(207, 102, 121, 0.1);">
+            <div class="control-title" style="color: var(--error-color);"><i class="fas fa-power-off"></i> System Maintenance</div>
+            <div class="control-group">
+                <button onclick="restartSystem()" class="action-btn" style="background-color: var(--error-color);">Restart System Logic</button>
+            </div>
+        </div>
     </div>
 
     <div id="toast">Notification</div>
@@ -353,6 +360,22 @@
                 }
             } catch (e) {
                 alert('Error: ' + e.message);
+            }
+        }
+
+        async function restartSystem() {
+            if (!confirm("Are you sure you want to restart the system logic? This will toggle the fans and attempt to re-establish control.")) {
+                return;
+            }
+            try {
+                const res = await fetch('api/system/restart', { method: 'POST' });
+                if (res.ok) {
+                    showToast('✅ Restart sequence initiated', 'success');
+                } else {
+                    showToast('❌ Restart failed', 'error');
+                }
+            } catch (e) {
+                showToast('❌ Error: ' + e.message, 'error');
             }
         }
     </script>

@@ -39,6 +39,7 @@ public class HumidityMonitor {
 
     // Configuration
     private static final int POLL_INTERVAL = Integer.parseInt(System.getenv().getOrDefault("POLL_INTERVAL", "30"));
+    private static final boolean MONITOR_ONLY = Boolean.parseBoolean(System.getenv().getOrDefault("MONITOR_ONLY", "true"));
 
     // Boost Configuration
     private static final boolean BOOST_ENABLED = Boolean.parseBoolean(System.getenv().getOrDefault("BOOST_ENABLED", "true"));
@@ -350,6 +351,11 @@ public class HumidityMonitor {
     }
 
     private void updateFanSpeed(int humidity, int currentRpm, int supplyDuty, boolean isDefrosting) {
+        if (MONITOR_ONLY) {
+            log("Monitor mode active. Recommended speed: " + NORMAL_SPEED + " (Reason: Monitor Only)");
+            return;
+        }
+
         int targetSpeed = NORMAL_SPEED;
         String reason = "Normal";
 
