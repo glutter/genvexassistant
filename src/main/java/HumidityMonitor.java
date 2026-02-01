@@ -133,9 +133,12 @@ public class HumidityMonitor {
         public void handle(HttpExchange t) throws IOException {
             t.getResponseHeaders().add("Content-Type", "application/json");
             
+            // Effective speed: if RPM is 0, the fan is effectively off regardless of command
+            int effectiveSpeed = (lastRpm < 100) ? 0 : currentFanSpeed;
+            
             String json = String.format(
-                "{\"humidity\":%d, \"temp\":%.1f, \"rpm\":%d, \"fan_speed\":%d, \"boost\":%b, \"static_mode\":%b, \"static_speed\":%d}",
-                lastHumidity, lastTemp, lastRpm, currentFanSpeed, boostActive, staticRpmMode, staticRpmSpeed
+                "{\"humidity\":%d, \"temp\":%.1f, \"rpm\":%d, \"fan_speed\":%d, \"commanded_speed\":%d, \"boost\":%b, \"static_mode\":%b, \"static_speed\":%d}",
+                lastHumidity, lastTemp, lastRpm, effectiveSpeed, currentFanSpeed, boostActive, staticRpmMode, staticRpmSpeed
             );
 
             t.sendResponseHeaders(200, json.length());
