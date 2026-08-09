@@ -332,13 +332,12 @@ public class HumidityMonitor {
                 log("STATUS: Unit appears to be in DEFROST/ANTI-ICE mode (Supply Off, Extract On, Low Temp).");
             }
 
-            // Check for boost conditions
-            if (BOOST_ENABLED) {
-                checkBoostLogic(humidity);
-            }
-            
             // Apply Fan Speed Control
             updateFanSpeed(humidity, supplyRpm, supplyDuty, isDefrosting);
+
+            // Determine active/estimated speed dynamically (ensures actual state is reflected at startup, 
+            // under Monitor-Only mode, or when overridden physically outside the script)
+            currentFanSpeed = estimateFanSpeed(supplyRpm, supplyDuty);
 
             lastHumidity = humidity;
             lastHumidityTime = System.currentTimeMillis();
@@ -736,6 +735,18 @@ public class HumidityMonitor {
         } catch (SQLException e) {
             logError("Cleanup error: " + e.getMessage());
         }
+    }
+
+    private int estimateFanSpeed(int rpm, int duty) {
+        if (rpm < 100) {
+            return 0;
+        }
+        int pct = duty / 100; // e.g. 5000 -> 50
+        if (pct < 15) return 0;
+        if (pct < 40) return 1; // Speed 1 (usually ~30%)
+        if (pct < 60) return 2; // Speed 2 (usually ~50%)
+        if (pct < 85) return 3; // Speed 3 (usually ~70-80%)
+        return 4;               // Speed 4 (usually 100%)
     }
 
     private void log(String message) {
