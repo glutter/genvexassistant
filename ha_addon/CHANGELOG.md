@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.40
+
+- **Fixed Fan Speed Display bug**: Derives fan speed dynamically from actual EC-motor duty cycle (register 18) and RPM. This fixes the `-1` Fan Speed display bug during startup or when running in passive monitoring mode.
+- **Unified UX & System Control**: Replaced conflicting checkboxes with a single mutually exclusive "System Control Mode" dropdown (Auto Control, Static Fan Speed, Passive Monitor).
+- **Interactive Alerts & Banners**: Added live dashboard notification banners to visually highlight when a rapid humidity shower boost or a manual ventilation override is actively running, showing time remaining.
+
 ## 1.39
 
 - The Redundancy: The identical logic for evaluating if a given time falls in the "night" interval was copied inline in two different places in HumidityMonitor.java (updateFanSpeed and checkBoostLogic).
