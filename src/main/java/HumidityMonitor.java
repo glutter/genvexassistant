@@ -299,11 +299,10 @@ public class HumidityMonitor {
 
     private void pollAndStore() {
         try {
-            // Always reconnect before polling to avoid stale UDP sessions
-            if (client.isConnected()) {
-                client.disconnect();
+            if (!client.isConnected()) {
+                log("Establishing connection to Genvex...");
+                client.connect();
             }
-            client.connect();
 
             int humidity = client.readDatapoint(26);
             int tempSupplyRaw = client.readDatapoint(20);
@@ -422,14 +421,14 @@ public class HumidityMonitor {
         } else if (staticRpmMode) {
             targetSpeed = staticRpmSpeed;
             reason = "Static RPM Mode";
-        } else if (boostActive) {
+                } else if (boostActive) {
             targetSpeed = BOOST_SPEED;
             reason = "Boost";
         } else {
             LocalTime now = LocalTime.now();
-            boolean isNight = now.isAfter(NIGHT_START) || now.isBefore(NIGHT_END);
+            boolean isNightTime = isNight(now);
 
-            if (isNight) {
+            if (isNightTime) {
                 targetSpeed = 1; // Night Mode (Lowest speed)
                 reason = "Night Mode";
             } else {
@@ -532,6 +531,14 @@ public class HumidityMonitor {
         }
     }
 
+    private boolean isNight(LocalTime time) {
+        if (NIGHT_START.isBefore(NIGHT_END)) {
+            return !time.isBefore(NIGHT_START) && !time.isAfter(NIGHT_END);
+        } else {
+            return !time.isBefore(NIGHT_START) || !time.isAfter(NIGHT_END);
+        }
+    }
+
     private void checkBoostLogic(int currentHumidity) {
         if (staticRpmMode) return; // Skip boost logic if static mode is active
         if (lastHumidity == -1) return; // First run, can't calculate delta
@@ -555,9 +562,9 @@ public class HumidityMonitor {
             
             if (rapidRise || highHumidity) {
                 LocalTime timeNow = LocalTime.now();
-                boolean isNight = timeNow.isAfter(NIGHT_START) || timeNow.isBefore(NIGHT_END);
+                boolean isNightTime = isNight(timeNow);
 
-                if (isNight) {
+                if (isNightTime) {
                     if (rapidRise) {
                         log("Rapid humidity rise detected, but Boost is disabled at night.");
                     }

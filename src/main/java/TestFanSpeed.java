@@ -124,6 +124,7 @@ public class TestFanSpeed {
             try {
                 long startTime = System.currentTimeMillis();
                 while (System.currentTimeMillis() - startTime < 2000) {
+                    responsePacket.setLength(receiveBuffer.length);
                     socket.receive(responsePacket);
                     byte[] responseData = Arrays.copyOf(responsePacket.getData(), responsePacket.getLength());
                     

@@ -198,6 +198,7 @@ public class ConnectGenvex {
                 // Try to receive multiple times in case of NOTIFY packets
                 long startTime = System.currentTimeMillis();
                 while (System.currentTimeMillis() - startTime < 2000) { // 2 second window per attempt
+                    responsePacket.setLength(receiveBuffer.length);
                     socket.receive(responsePacket);
                     byte[] responseData = Arrays.copyOf(responsePacket.getData(), responsePacket.getLength());
                     System.out.println("Received packet: " + bytesToHex(responseData));

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.39
+
+- The Redundancy: The identical logic for evaluating if a given time falls in the "night" interval was copied inline in two different places in HumidityMonitor.java (updateFanSpeed and checkBoostLogic).
+
+- The Bug: The inline check (now.isAfter(NIGHT_START) || now.isBefore(NIGHT_END)) has a classic bug: if the start time is configured to be before the end time on the same day (e.g. 01:00 to 04:00), then every hour after 01:00 (such as 12:00 noon or 18:00 evening) triggers as "night".
+
+- The Fix: Refactored that logic into a single robust helper method isNight(LocalTime time) that handles both same-day (non-crossing) and multi-day (midnight-crossing) intervals correctly under all custom Home Assistant configurations:
+
 ## 1.38
 
 - **Historical Data View**: Added daily, weekly, and monthly chart views with smart downsampling.

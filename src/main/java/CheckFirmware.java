@@ -79,6 +79,7 @@ public class CheckFirmware {
             byte[] pingResponseData = null;
             long startTime = System.currentTimeMillis();
             while (System.currentTimeMillis() - startTime < 5000) {
+                responsePacket.setLength(buffer.length);
                 socket.receive(responsePacket);
                 byte[] data = Arrays.copyOf(responsePacket.getData(), responsePacket.getLength());
                 
