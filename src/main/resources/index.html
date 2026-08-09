@@ -120,26 +120,37 @@
             </div>
         </div>
 
+        <!-- Visually indicate boost/ventilation activations -->
+        <div id="status-banner" style="display: none; padding: 15px; margin-bottom: 25px; border-radius: 8px; text-align: center; font-weight: 600; font-size: 0.95em; border: 1px solid var(--button-bg); background: rgba(55, 0, 179, 0.15); color: var(--text-color); box-shadow: 0 4px 6px rgba(0,0,0,0.25);"></div>
+
         <div class="control-card">
-            <div class="control-title"><i class="fas fa-robot"></i> Operation Mode</div>
+            <div class="control-title"><i class="fas fa-sliders-h"></i> System Control Mode</div>
             <p style="font-size: 0.85em; color: var(--secondary-text); margin: 0 0 15px 0; text-align: center;">
-                Determine if the system should actively control the fans or just observe.
+                Select the primary system driver.
             </p>
-            <div class="control-group" style="justify-content: center;">
-                <label style="display: flex; align-items: center; gap: 15px; cursor: pointer;">
-                    <span style="font-size: 0.9em;">Control Active</span>
-                    <div class="switch">
-                        <input type="checkbox" id="monitor-only-switch" onchange="toggleSystemMode()">
-                        <span class="slider"></span>
-                    </div>
-                    <span style="font-size: 0.9em;">Monitor Only</span>
-                </label>
+            <div class="control-group" style="flex-direction: column; width: 100%; max-width: 450px; gap: 12px; margin: 0 auto;">
+                <select id="system-mode-select" onchange="applySystemControlMode()">
+                    <option value="auto">🤖 Automatic Control (humidity-based, with night schedules)</option>
+                    <option value="static">📍 Static Fan Speed (locks fan speed continuously)</option>
+                    <option value="monitor">👁️ Passive Monitor Only (observes but doesn't write to fan)</option>
+                </select>
+                
+                <div id="static-speed-control-group" style="display: none; width: 100%; align-items: center; justify-content: center; gap: 10px; margin-top: 5px;">
+                    <span style="font-size: 0.9rem; color: var(--secondary-text);">Target Speed:</span>
+                    <select id="static-speed" style="max-width: 150px;" onchange="applyStaticSpeedUpdate()">
+                        <option value="1">Speed 1 (Low)</option>
+                        <option value="2">Speed 2 (Normal)</option>
+                        <option value="3">Speed 3 (Boost)</option>
+                        <option value="4">Speed 4 (Max)</option>
+                    </select>
+                </div>
             </div>
-             <div id="mode-status-text" style="font-size: 0.8rem; color: var(--accent-color); font-weight: 600;">...</div>
+            <div id="mode-status-text" style="font-size: 0.85rem; color: var(--accent-color); font-weight: 600; text-align: center; margin-top: 10px;">Retrieving system mode...</div>
         </div>
 
         <div class="control-card">
-            <div class="control-title"><i class="fas fa-wind"></i> Manual Ventilation</div>
+            <div class="control-title"><i class="fas fa-wind"></i> Temporary Ventilation Override (Udluftning)</div>
+            <p style="font-size: 0.85em; color: var(--secondary-text); margin: 0 0 10px 0; text-align: center;">Need a sudden blast or timed trigger? Overrides active control mode briefly.</p>
             <div class="control-group">
                 <select id="udluftning-level">
                     <option value="1">Speed 1 (Low)</option>
@@ -164,23 +175,6 @@
 
         <div class="chart-container">
             <canvas id="mainChart"></canvas>
-        </div>
-
-        <div class="control-card">
-            <div class="control-title"><i class="fas fa-cog"></i> Static RPM Mode</div>
-            <p style="font-size: 0.85em; color: var(--secondary-text); margin: 0 0 10px 0;">Overrides humidity control but not Udluftning.</p>
-            <div class="control-group">
-                <label style="display: flex; align-items: center; gap: 8px; color: var(--text-color);">
-                    <input type="checkbox" id="static-mode-enabled" onchange="updateStaticMode()"> Enable
-                </label>
-                <select id="static-speed">
-                    <option value="1">Speed 1</option>
-                    <option value="2">Speed 2</option>
-                    <option value="3">Speed 3</option>
-                    <option value="4">Speed 4</option>
-                </select>
-                <button onclick="updateStaticMode()">Update</button>
-            </div>
         </div>
 
         <div class="control-card" style="border-color: var(--error-color); background: rgba(207, 102, 121, 0.1);">
@@ -237,30 +231,53 @@
             }
         }
 
+        let isUpdatingMode = false;
+
         function updateLiveDisplay(data) {
             document.getElementById('live-humidity').textContent = data.humidity + '%';
             document.getElementById('live-temp').textContent = data.temp.toFixed(1) + '°C';
             document.getElementById('live-rpm').textContent = data.rpm;
             document.getElementById('live-speed').textContent = data.fan_speed;
 
-            // Update Static Control UI
-            document.getElementById('static-mode-enabled').checked = data.static_mode;
-            document.getElementById('static-speed').value = data.static_speed;
-            
-            // Update System Mode UI
-            const monitorSwitch = document.getElementById('monitor-only-switch');
-            // Check if user is interacting with it to avoid jitter? No, just update it.
-            // If the user just clicked it, fetchData might overwrite it before the POST returns, 
-            // but the POST should trigger a refresh or return quickly.
-            monitorSwitch.checked = data.monitor_only;
-            
-            const modeText = document.getElementById('mode-status-text');
-            if (data.monitor_only) {
-                modeText.textContent = "System is in PASSIVE MONITORING mode.";
-                modeText.style.color = "#bb86fc"; 
+            // Handle temporary notification banner for active boosters / overrides (visually indicate boost activations)
+            const banner = document.getElementById('status-banner');
+            if (data.manual_override_active) {
+                banner.style.display = 'block';
+                banner.style.borderColor = 'var(--accent-color)';
+                banner.style.background = 'rgba(187, 134, 252, 0.15)';
+                banner.innerHTML = `<i class="fas fa-hourglass-half"></i> &nbsp; <strong>Manual Ventilation Override Active:</strong> Speed ${data.commanded_speed} for another ${Math.ceil(data.manual_override_secs_left / 60)}m`;
+            } else if (data.boost) {
+                banner.style.display = 'block';
+                banner.style.borderColor = 'var(--success-color)';
+                banner.style.background = 'rgba(3, 218, 198, 0.15)';
+                banner.innerHTML = `<i class="fas fa-shower"></i> &nbsp; <strong>Shower Rapid Humidity Boost Active:</strong> Speed ${data.commanded_speed} for another ${Math.ceil(data.boost_secs_left / 60)}m`;
             } else {
-                modeText.textContent = "System has ACTIVE CONTROL enabled.";
-                modeText.style.color = "#03dac6";
+                banner.style.display = 'none';
+            }
+
+            // Only update dropdown control state if user is not actively making updates
+            if (!isUpdatingMode) {
+                const select = document.getElementById('system-mode-select');
+                const staticGroup = document.getElementById('static-speed-control-group');
+                const modeText = document.getElementById('mode-status-text');
+                
+                if (data.monitor_only) {
+                    select.value = 'monitor';
+                    staticGroup.style.display = 'none';
+                    modeText.textContent = "👁️ PASSIVE MONITORING mode active: Observing telemetry, fan writes disabled.";
+                    modeText.style.color = "#bb86fc";
+                } else if (data.static_mode) {
+                    select.value = 'static';
+                    staticGroup.style.display = 'flex';
+                    document.getElementById('static-speed').value = data.static_speed;
+                    modeText.textContent = `📍 STATIC MODE active: Fans held continuously at Speed ${data.static_speed}.`;
+                    modeText.style.color = "#03dac6";
+                } else {
+                    select.value = 'auto';
+                    staticGroup.style.display = 'none';
+                    modeText.textContent = "🤖 AUTONOMOUS mode active: Speed automatically adjusts based on humidity rules & night schedule.";
+                    modeText.style.color = "#03dac6";
+                }
             }
         }
 
@@ -393,8 +410,6 @@
 
         async function triggerUdluftning(minutesOverride = null) {
             const level = parseInt(document.getElementById('udluftning-level').value);
-            // If explicit minutes passed, use it, otherwise default to 30 (or whatever UI logic)
-            // But wait, the original code hardcoded 30. Let's fix that.
             let minutes = minutesOverride;
             if (!minutes) minutes = 30;
 
@@ -421,26 +436,85 @@
             }
         }
 
-        async function updateStaticMode() {
-            const enabled = document.getElementById('static-mode-enabled').checked;
-            const speed = parseInt(document.getElementById('static-speed').value);
+        async function applySystemControlMode() {
+            if (isUpdatingMode) return;
+            isUpdatingMode = true;
             
+            const mode = document.getElementById('system-mode-select').value;
+            const staticGroup = document.getElementById('static-speed-control-group');
+            
+            if (mode === 'static') {
+                staticGroup.style.display = 'flex';
+                await applyStaticSpeedUpdate();
+            } else {
+                staticGroup.style.display = 'none';
+                try {
+                    if (mode === 'monitor') {
+                        // Monitor Only
+                        const monitorRes = await fetch('api/system/mode', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ monitor_only: true })
+                        });
+                        if (monitorRes.ok) {
+                            showToast('👁️ Passive Monitoring Mode Enabled', 'success');
+                        } else {
+                            showToast('❌ Failed to update Operation Mode', 'error');
+                        }
+                    } else if (mode === 'auto') {
+                        // Turn off static mode
+                        const staticRes = await fetch('api/fan/static', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ enabled: false })
+                        });
+                        
+                        // Turn off monitor-only
+                        const monitorRes = await fetch('api/system/mode', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ monitor_only: false })
+                        });
+                        
+                        if (staticRes.ok && monitorRes.ok) {
+                            showToast('🤖 Autonomous Humidity Control Enabled', 'success');
+                        } else {
+                            showToast('❌ Failed to enable Auto Control', 'error');
+                        }
+                    }
+                } catch (e) {
+                    showToast('❌ Communication Error: ' + e.message, 'error');
+                }
+            }
+            
+            isUpdatingMode = false;
+            fetchData();
+        }
+
+        async function applyStaticSpeedUpdate() {
+            const speed = parseInt(document.getElementById('static-speed').value);
             try {
-                const res = await fetch('api/fan/static', {
+                // Ensure monitor_only is false
+                const monitorRes = await fetch('api/system/mode', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ enabled: enabled, speed: speed })
+                    body: JSON.stringify({ monitor_only: false })
                 });
-                
-                if (res.ok) {
-                    const data = await res.json();
-                    console.log("Static mode updated:", data);
-                    fetchData(); // Refresh UI
+
+                // Turn on static speed mode
+                const staticRes = await fetch('api/fan/static', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: true, speed: speed })
+                });
+
+                if (staticRes.ok && monitorRes.ok) {
+                    showToast(`📍 Continuous Speed Lock updated: Speed ${speed}`, 'success');
                 } else {
-                    alert('Failed to update static mode');
+                    showToast('❌ Failed to configure static speed', 'error');
                 }
             } catch (e) {
-                alert('Error: ' + e.message);
+                showToast('❌ Error: ' + e.message, 'error');
             }
         }
 
@@ -457,31 +531,6 @@
                 }
             } catch (e) {
                 showToast('❌ Error: ' + e.message, 'error');
-            }
-        }
-
-        async function toggleSystemMode() {
-            const monitorOnly = document.getElementById('monitor-only-switch').checked;
-            
-            try {
-                const res = await fetch('api/system/mode', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ monitor_only: monitorOnly })
-                });
-                
-                if (res.ok) {
-                    const data = await res.json();
-                    showToast(data.monitor_only ? '👁️ Monitoring Mode Active' : '🤖 Control Mode Active', 'success');
-                    fetchData(); // Refresh UI
-                } else {
-                    showToast('❌ Failed to change mode', 'error');
-                    // Revert switch
-                    document.getElementById('monitor-only-switch').checked = !monitorOnly;
-                }
-            } catch (e) {
-                showToast('❌ Error: ' + e.message, 'error');
-                document.getElementById('monitor-only-switch').checked = !monitorOnly;
             }
         }
     </script>

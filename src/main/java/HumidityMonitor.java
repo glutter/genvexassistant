@@ -164,9 +164,14 @@ public class HumidityMonitor {
             // Effective speed: if RPM is 0, the fan is effectively off regardless of command
             int effectiveSpeed = (lastRpm < 100) ? 0 : currentFanSpeed;
             
+            long now = System.currentTimeMillis();
+            long manualOverrideSecsLeft = Math.max(0, (manualOverrideEndTime - now) / 1000);
+            long boostSecsLeft = Math.max(0, (boostEndTime - now) / 1000);
+            boolean isManualOverrideCurrentlyActive = manualOverrideActive && (now < manualOverrideEndTime);
+
             String json = String.format(
-                "{\"humidity\":%d, \"temp\":%.1f, \"rpm\":%d, \"fan_speed\":%d, \"commanded_speed\":%d, \"boost\":%b, \"static_mode\":%b, \"static_speed\":%d, \"monitor_only\":%b}",
-                lastHumidity, lastTemp, lastRpm, effectiveSpeed, currentFanSpeed, boostActive, staticRpmMode, staticRpmSpeed, monitorOnly
+                "{\"humidity\":%d, \"temp\":%.1f, \"rpm\":%d, \"fan_speed\":%d, \"commanded_speed\":%d, \"boost\":%b, \"static_mode\":%b, \"static_speed\":%d, \"monitor_only\":%b, \"manual_override_active\":%b, \"manual_override_secs_left\":%d, \"boost_secs_left\":%d}",
+                lastHumidity, lastTemp, lastRpm, effectiveSpeed, currentFanSpeed, boostActive, staticRpmMode, staticRpmSpeed, monitorOnly, isManualOverrideCurrentlyActive, manualOverrideSecsLeft, boostSecsLeft
             );
             sendJson(t, json);
         }
