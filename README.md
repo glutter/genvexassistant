@@ -4,11 +4,6 @@ A Java-based client for communicating with Genvex ventilation systems (specifica
 
 ## Overview
 
-This project implements a reverse-engineered client for the Genvex Connect system. It allows for:
-- Discovery and connection to the ventilation unit.
-- Reading sensor values (Datapoints).
-- Handling the specific "Notification before Response" behavior of the device.
-
 ## Dashboard Demo
 
 ![Dashboard Demo](demo_image.png)
