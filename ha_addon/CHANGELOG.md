@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.46
+
+- Fixed recurring datapoint timeouts by establishing a fresh Genvex UDP session for every polling cycle instead of reusing a session after the unit's idle timeout.
+- Abort the current poll after the first datapoint exhausts its retries, avoiding repeated timeouts across all remaining datapoints and recovering on the next scheduled poll.
+
 ## 1.45
 
 - Added toggleable history series for supply, indoor/extract, outside, and exhaust temperatures, humidity, fan RPM, and fan speed.

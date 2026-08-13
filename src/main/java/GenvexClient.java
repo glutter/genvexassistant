@@ -88,8 +88,8 @@ public class GenvexClient {
             // System.out.println("Read Datapoint " + addr + ": " + val); 
             return val;
         }
-        System.err.println("Read Datapoint " + addr + " failed: Response null or short");
-        return -1;
+        connected = false;
+        throw new IOException("Read datapoint " + addr + " failed after 5 attempts");
     }
 
     public void setFanSpeed(int speed) throws IOException, InterruptedException {

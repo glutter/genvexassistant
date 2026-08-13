@@ -381,10 +381,9 @@ public class HumidityMonitor {
 
     private void pollAndStore() {
         try {
-            if (!client.isConnected()) {
-                log("Establishing connection to Genvex...");
-                client.connect();
-            }
+            client.disconnect();
+            log("Establishing connection to Genvex...");
+            client.connect();
 
             int humidity = client.readDatapoint(26);
             int tempSupplyRaw = client.readDatapoint(20);
@@ -448,7 +447,7 @@ public class HumidityMonitor {
         } catch (Exception e) {
             logError("Error polling data: " + e.getMessage());
             e.printStackTrace(); 
-            // Try to reconnect next time
+        } finally {
             client.disconnect();
         }
     }
