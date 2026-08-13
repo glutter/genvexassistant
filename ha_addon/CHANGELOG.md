@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.49
+
+- Restored nighttime humidity protection so high and very-high humidity can override quiet speed even when cooling is unavailable, while preserving warm-night cooling behavior.
+- Moved Home Assistant publishing off the polling thread with latest-value coalescing, kept sun-state network access outside the Genvex lock, and normalized monitor/manual/static/boost state transitions.
+- Added explicit unavailable-datapoint handling, allowing optional temperature gaps while rejecting unavailable control-critical values before they reach fan logic or telemetry.
+- Separated observed fan speed from acknowledged commanded speed and made live API snapshots atomic, preventing mixed pre-command/post-command samples and stale countdowns.
+- Fixed history timestamps to explicit UTC, replaced row-count downsampling with newest-inclusive time buckets, and added the missing timestamp index during runtime migration.
+- Added regression coverage for nighttime humidity priority, unavailable datapoints, UTC history buckets, newest-row retention, and runtime index creation.
+
 ## 1.48
 
 - Made useful warm-night cooling override quiet night speed: the reported 23.7°C indoor, 16.7°C outside, and 23.1°C supply conditions now start at speed 2, including after midnight.

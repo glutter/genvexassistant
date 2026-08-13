@@ -1,3 +1,4 @@
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -80,6 +81,12 @@ class GenvexClientResponseTest {
         assertFalse(GenvexClient.isExpectedCryptResponse(
             packet, data, address, PORT, CLIENT_ID, SERVER_ID, SEQUENCE));
         }
+
+    @Test
+    void decodesUnavailableDatapointSentinel() {
+        assertEquals(-1, GenvexClient.decodeDatapointValue(new byte[] {0, 0, (byte) 0xFF, (byte) 0xFF}));
+        assertEquals(529, GenvexClient.decodeDatapointValue(new byte[] {0, 0, 0x02, 0x11}));
+    }
 
     private static byte[] response(int sequence) {
         ByteBuffer buffer = ByteBuffer.allocate(28);

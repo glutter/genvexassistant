@@ -94,12 +94,20 @@ public class GenvexClient {
         byte[] response = sendPacketAndWaitForResponse(sequenceId++, cmd, 5);
         
         if (response != null && response.length >= 4) {
-            int val = ((response[2] & 0xFF) << 8) | (response[3] & 0xFF);
+            int val = decodeDatapointValue(response);
             // System.out.println("Read Datapoint " + addr + ": " + val); 
             return val;
         }
         connected = false;
         throw new IOException("Read datapoint " + addr + " failed after 5 attempts");
+    }
+
+    static int decodeDatapointValue(byte[] response) {
+        if (response == null || response.length < 4) {
+            return -1;
+        }
+        int value = ((response[2] & 0xFF) << 8) | (response[3] & 0xFF);
+        return value == 0xFFFF ? -1 : value;
     }
 
     public void setFanSpeed(int speed) throws IOException, InterruptedException {

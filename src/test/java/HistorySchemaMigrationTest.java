@@ -31,6 +31,14 @@ class HistorySchemaMigrationTest {
             assertTrue(columns.contains("temp_exhaust"));
             assertTrue(columns.contains("temp_extract"));
             assertTrue(columns.contains("fan_speed_level"));
+
+            boolean timestampIndexFound = false;
+            try (ResultSet rs = stmt.executeQuery("PRAGMA index_list(humidity_readings)")) {
+                while (rs.next()) {
+                    timestampIndexFound |= "idx_humidity_timestamp".equals(rs.getString("name"));
+                }
+            }
+            assertTrue(timestampIndexFound);
         }
     }
 }
