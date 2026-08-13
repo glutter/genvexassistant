@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.45
+
+- Added toggleable history series for supply, indoor/extract, outside, and exhaust temperatures, humidity, fan RPM, and fan speed.
+- Added backward-compatible SQLite migration and persistence for the additional temperature and fan-speed history values; older rows remain valid and render as gaps where data was not recorded.
+- Updated the dashboard screenshot and responsive chart controls, including a dedicated fan-speed axis and reduced mobile time-label density.
+
+## 1.44
+
+- Redesigned the dashboard around a compact live-climate overview, side-by-side control panels, and a clearly separated history view.
+- Added responsive mobile layouts, consistent controls and icons, live connection/update status, clearer active-mode banners, and reduced chart label density.
+- Moved system restart into collapsed maintenance controls and fixed duplicate version metadata in the add-on configuration.
+
 ## 1.43
 
 - Fixed outside, exhaust, and extract/indoor temperatures displaying 30°C too high by applying the configured raw calibration offset consistently to all temperature registers.

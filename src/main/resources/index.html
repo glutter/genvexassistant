@@ -7,7 +7,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-moment@1.0.1/dist/chartjs-adapter-moment.min.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Sora:wght@500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root {
@@ -88,123 +88,377 @@
         input:checked + .slider { background-color: var(--success-color); }
         input:focus + .slider { box-shadow: 0 0 1px var(--success-color); }
         input:checked + .slider:before { transform: translateX(26px); }
+
+        /* Compact dashboard layout */
+        :root {
+            color-scheme: dark;
+            --bg-color: #0d1110;
+            --container-bg: transparent;
+            --text-color: #f2f6f4;
+            --secondary-text: #9caaa4;
+            --card-bg: #161b19;
+            --surface-raised: #1d2421;
+            --surface-hover: #242d29;
+            --border-color: #303a36;
+            --accent-color: #51d2a0;
+            --button-bg: #51d2a0;
+            --button-hover: #69dfb3;
+            --success-color: #51d2a0;
+            --warning-color: #f0b45b;
+            --error-color: #ef6b73;
+        }
+        body { min-width: 320px; padding: 12px; font-family: 'DM Sans', sans-serif; }
+        button, select { font: inherit; }
+        button:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 2px; }
+        .container { max-width: 1180px; padding: 0; background: transparent; border-radius: 0; box-shadow: none; }
+        .header { min-height: 54px; gap: 16px; margin-bottom: 12px; }
+        .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+        .brand-icon, .control-heading-icon {
+            display: grid;
+            place-items: center;
+            flex: 0 0 auto;
+            border-radius: 6px;
+            color: var(--accent-color);
+            background: #14241e;
+        }
+        .brand-icon { width: 36px; height: 36px; border: 1px solid #376553; border-radius: 8px; }
+        h1, h2 { margin: 0; font-family: 'Sora', sans-serif; letter-spacing: 0; }
+        h1 { font-size: 1.15rem; }
+        h2 { font-size: 0.95rem; }
+        .brand-subtitle { margin-top: 2px; color: var(--secondary-text); font-size: 0.76rem; }
+        .header-actions { display: flex; align-items: center; gap: 8px; }
+        .connection-state {
+            height: 32px;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            padding: 0 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--secondary-text);
+            background: var(--card-bg);
+            font-size: 0.75rem;
+            white-space: nowrap;
+        }
+        .connection-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warning-color); }
+        .connection-state.connected .connection-dot { background: var(--accent-color); }
+        .connection-state.error .connection-dot { background: var(--error-color); }
+        .icon-btn {
+            width: 36px;
+            min-height: 36px;
+            display: grid;
+            place-items: center;
+            padding: 0;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--secondary-text);
+            background: var(--card-bg);
+        }
+        .icon-btn:hover { color: var(--text-color); background: var(--surface-hover); transform: none; }
+        .section-heading { min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 7px; }
+        .section-meta { color: var(--secondary-text); font-size: 0.74rem; }
+        .live-data { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 7px; margin-bottom: 10px; }
+        .data-point {
+            min-width: 0;
+            min-height: 74px;
+            display: grid;
+            grid-template-columns: 29px minmax(0, 1fr);
+            grid-template-rows: auto auto;
+            align-content: center;
+            column-gap: 8px;
+            padding: 11px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            text-align: left;
+            background: var(--card-bg);
+        }
+        .data-point:hover { transform: none; border-color: #405048; }
+        .data-icon {
+            grid-row: 1 / 3;
+            align-self: center;
+            width: 29px;
+            height: 29px;
+            display: grid;
+            place-items: center;
+            margin: 0;
+            border-radius: 6px;
+            background: #14241e;
+            font-size: 0.86rem;
+        }
+        .data-label { min-width: 0; overflow: hidden; margin: 0; font-size: 0.68rem; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; text-transform: none; letter-spacing: 0; }
+        .data-value { min-width: 0; overflow: hidden; font-family: 'Sora', sans-serif; font-size: 1.08rem; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+        .status-banner {
+            display: none;
+            align-items: center;
+            gap: 9px;
+            min-height: 38px;
+            margin-bottom: 10px;
+            padding: 8px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 7px;
+            background: var(--card-bg);
+            font-size: 0.8rem;
+        }
+        .status-banner.is-visible { display: flex; }
+        .status-banner.manual { border-color: #346898; background: #142231; }
+        .status-banner.boost { border-color: #376553; background: #14241e; }
+        .status-banner.cooling { border-color: #6f592e; background: #282116; }
+        .control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+        .control-card, .chart-panel { min-width: 0; margin: 0; padding: 14px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--card-bg); }
+        .control-card { display: block; }
+        .control-heading { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+        .control-heading-icon { width: 28px; height: 28px; font-size: 0.82rem; }
+        .control-eyebrow { color: var(--secondary-text); font-size: 0.66rem; line-height: 1.2; text-transform: uppercase; }
+        .control-title { margin: 2px 0 0; color: var(--text-color); font-family: 'Sora', sans-serif; font-size: 0.88rem; }
+        .field-label { display: block; margin-bottom: 5px; color: var(--secondary-text); font-size: 0.72rem; }
+        .control-group { max-width: none; align-items: flex-end; gap: 8px; }
+        .field { min-width: 0; flex: 1; }
+        select { width: 100%; height: 40px; padding: 0 34px 0 11px; border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-color); background: var(--surface-raised); font-size: 0.82rem; }
+        button { min-height: 40px; padding: 0 14px; border-radius: 6px; color: #06140f; background: var(--button-bg); font-size: 0.8rem; }
+        button:hover { background: var(--button-hover); }
+        button:disabled { opacity: 0.5; cursor: wait; }
+        .action-btn { flex: 0 0 auto; white-space: nowrap; }
+        .static-speed-control { display: none; align-items: flex-end; gap: 8px; margin-top: 8px; }
+        .static-speed-control .field { max-width: 220px; }
+        .mode-status { min-height: 34px; display: flex; align-items: center; gap: 7px; margin-top: 9px; padding: 7px 9px; border-radius: 6px; color: var(--secondary-text); background: var(--surface-raised); font-size: 0.72rem; line-height: 1.35; }
+        .mode-status.auto, .mode-status.static { color: #aee8d0; }
+        .mode-status.monitor { color: #b8d6ff; }
+        .quick-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
+        .quick-btn { min-height: 34px; padding: 0 8px; border-color: var(--border-color); color: var(--text-color); background: var(--surface-raised); font-weight: 500; }
+        .quick-btn:hover { border-color: #48715f; color: var(--accent-color); background: var(--surface-hover); }
+        .chart-panel { padding-bottom: 8px; }
+        .chart-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 5px; }
+        .range-controls { display: inline-grid; grid-template-columns: repeat(3, 1fr); gap: 2px; margin: 0; padding: 2px; border: 1px solid var(--border-color); border-radius: 7px; background: var(--surface-raised); }
+        .range-btn { min-width: 58px; min-height: 30px; padding: 0 10px; border: 0; color: var(--secondary-text); background: transparent; font-size: 0.72rem; }
+        .range-btn:hover { color: var(--text-color); background: var(--surface-hover); }
+        .range-btn.active { color: #06140f; background: var(--accent-color); }
+        .chart-series-controls { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 4px; }
+        .series-toggle {
+            min-height: 28px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 0 9px;
+            border: 1px solid var(--border-color);
+            color: var(--secondary-text);
+            background: transparent;
+            font-size: 0.7rem;
+            font-weight: 500;
+        }
+        .series-toggle:hover { color: var(--text-color); background: var(--surface-hover); }
+        .series-toggle.active { border-color: var(--series-color); color: var(--text-color); background: color-mix(in srgb, var(--series-color) 12%, transparent); }
+        .series-swatch { width: 8px; height: 8px; flex: 0 0 auto; border: 2px solid var(--series-color); border-radius: 2px; }
+        .series-toggle.active .series-swatch { background: var(--series-color); }
+        .chart-container { height: 340px; }
+        .maintenance { margin-top: 8px; border-top: 1px solid var(--border-color); color: var(--secondary-text); }
+        .maintenance summary { width: max-content; padding: 10px 0; font-size: 0.75rem; cursor: pointer; }
+        .maintenance-content { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 2px 0 8px; }
+        .maintenance-content p { margin: 0; font-size: 0.72rem; }
+        .danger-btn { min-height: 34px; color: #fff; background: transparent; border: 1px solid #754046; }
+        .danger-btn:hover { color: #fff; background: #47252a; border-color: var(--error-color); }
+        #toast { padding: 11px 14px; border: 1px solid var(--border-color); border-radius: 7px; background: #202724; font-size: 0.8rem; }
+
+        @media (max-width: 980px) { .live-data { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+        @media (max-width: 720px) {
+            body { padding: 8px; }
+            .header { min-height: 48px; margin-bottom: 8px; }
+            .brand-subtitle, .connection-state span:last-child { display: none; }
+            .connection-state { width: 32px; justify-content: center; padding: 0; }
+            .live-data { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .data-point { min-height: 68px; }
+            .data-point:last-child { grid-column: 1 / -1; }
+            .control-grid { grid-template-columns: minmax(0, 1fr); }
+            .control-card { padding: 12px; }
+            .chart-panel { padding: 12px 8px 6px; }
+            .chart-container { height: 300px; }
+            .chart-header { align-items: flex-start; }
+            .range-btn { min-width: 48px; padding: 0 7px; }
+            .maintenance-content { align-items: flex-start; flex-direction: column; }
+        }
+        @media (max-width: 420px) {
+            .control-group { align-items: stretch; flex-direction: column; }
+            .action-btn { width: 100%; }
+            .section-meta { display: none; }
+            .chart-header { align-items: stretch; flex-direction: column; }
+            .range-controls { width: 100%; }
+            .status-banner { align-items: flex-start; }
+        }
+        @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
     </style>
 </head>
 <body>
-    <div class="container" id="main-container">
-        <div class="header">
-            <h1>Genvex Monitor</h1>
-            <button class="refresh-btn" onclick="fetchData()" title="Refresh Data"><i class="fas fa-sync-alt"></i></button>
-        </div>
-        
-        <div class="live-data">
-            <div class="data-point">
-                <div class="data-icon"><i class="fas fa-tint"></i></div>
-                <div class="data-value" id="live-humidity">--%</div>
-                <div class="data-label">Humidity</div>
-            </div>
-            <div class="data-point">
-                <div class="data-icon"><i class="fas fa-thermometer-half"></i></div>
-                <div class="data-value" id="live-temp">--°C</div>
-                <div class="data-label">Supply Temp</div>
-            </div>
-            <div class="data-point">
-                <div class="data-icon"><i class="fas fa-house"></i></div>
-                <div class="data-value" id="live-temp-extract">--°C</div>
-                <div class="data-label">Indoor / Extract</div>
-            </div>
-            <div class="data-point">
-                <div class="data-icon"><i class="fas fa-cloud-sun"></i></div>
-                <div class="data-value" id="live-temp-outside">--°C</div>
-                <div class="data-label">Outside Temp</div>
-            </div>
-            <div class="data-point">
-                <div class="data-icon"><i class="fas fa-arrow-up-from-bracket"></i></div>
-                <div class="data-value" id="live-temp-exhaust">--°C</div>
-                <div class="data-label">Exhaust Temp</div>
-            </div>
-            <div class="data-point">
-                <div class="data-icon"><i class="fas fa-fan"></i></div>
-                <div class="data-value" id="live-rpm">--</div>
-                <div class="data-label">Fan RPM</div>
-            </div>
-            <div class="data-point">
-                <div class="data-icon"><i class="fas fa-tachometer-alt"></i></div>
-                <div class="data-value" id="live-speed">--</div>
-                <div class="data-label">Fan Speed</div>
-            </div>
-        </div>
-
-        <!-- Visually indicate boost/ventilation activations -->
-        <div id="status-banner" style="display: none; padding: 15px; margin-bottom: 25px; border-radius: 8px; text-align: center; font-weight: 600; font-size: 0.95em; border: 1px solid var(--button-bg); background: rgba(55, 0, 179, 0.15); color: var(--text-color); box-shadow: 0 4px 6px rgba(0,0,0,0.25);"></div>
-
-        <div class="control-card">
-            <div class="control-title"><i class="fas fa-sliders-h"></i> System Control Mode</div>
-            <p style="font-size: 0.85em; color: var(--secondary-text); margin: 0 0 15px 0; text-align: center;">
-                Select the primary system driver.
-            </p>
-            <div class="control-group" style="flex-direction: column; width: 100%; max-width: 450px; gap: 12px; margin: 0 auto;">
-                <select id="system-mode-select" onchange="applySystemControlMode()">
-                    <option value="auto">🤖 Automatic Control (humidity-based, with night schedules)</option>
-                    <option value="static">📍 Static Fan Speed (locks fan speed continuously)</option>
-                    <option value="monitor">👁️ Passive Monitor Only (observes but doesn't write to fan)</option>
-                </select>
-                
-                <div id="static-speed-control-group" style="display: none; width: 100%; align-items: center; justify-content: center; gap: 10px; margin-top: 5px;">
-                    <span style="font-size: 0.9rem; color: var(--secondary-text);">Target Speed:</span>
-                    <select id="static-speed" style="max-width: 150px;" onchange="applyStaticSpeedUpdate()">
-                        <option value="1">Speed 1 (Low)</option>
-                        <option value="2">Speed 2 (Normal)</option>
-                        <option value="3">Speed 3 (Boost)</option>
-                        <option value="4">Speed 4 (Max)</option>
-                    </select>
+    <main class="container" id="main-container">
+        <header class="header">
+            <div class="brand">
+                <div class="brand-icon" aria-hidden="true"><i class="fas fa-fan"></i></div>
+                <div>
+                    <h1>Genvex Monitor</h1>
+                    <div class="brand-subtitle">Ventilation overview</div>
                 </div>
             </div>
-            <div id="mode-status-text" style="font-size: 0.85rem; color: var(--accent-color); font-weight: 600; text-align: center; margin-top: 10px;">Retrieving system mode...</div>
-        </div>
-
-        <div class="control-card">
-            <div class="control-title"><i class="fas fa-wind"></i> Temporary Ventilation Override (Udluftning)</div>
-            <p style="font-size: 0.85em; color: var(--secondary-text); margin: 0 0 10px 0; text-align: center;">Need a sudden blast or timed trigger? Overrides active control mode briefly.</p>
-            <div class="control-group">
-                <select id="udluftning-level">
-                    <option value="1">Speed 1 (Low)</option>
-                    <option value="2">Speed 2 (Normal)</option>
-                    <option value="3" selected>Speed 3 (Boost)</option>
-                    <option value="4">Speed 4 (Max)</option>
-                </select>
-                <button class="action-btn" onclick="triggerUdluftning()">Start Custom</button>
+            <div class="header-actions">
+                <div class="connection-state" id="connection-state" role="status">
+                    <span class="connection-dot" aria-hidden="true"></span>
+                    <span id="connection-label">Updating</span>
+                </div>
+                <button class="icon-btn" onclick="fetchData()" title="Refresh data" aria-label="Refresh data"><i class="fas fa-rotate"></i></button>
             </div>
-            <div class="quick-actions">
-                <button class="quick-btn" onclick="triggerQuickBoost(30)">Boost 30m</button>
-                <button class="quick-btn" onclick="triggerQuickBoost(60)">Boost 1h</button>
-                <button class="quick-btn" onclick="triggerQuickBoost(120)">Boost 2h</button>
+        </header>
+
+        <section aria-labelledby="climate-title">
+            <div class="section-heading">
+                <h2 id="climate-title">Indoor climate</h2>
+                <span class="section-meta" id="last-updated">Waiting for data</span>
             </div>
-        </div>
-
-        <div class="range-controls">
-            <button class="range-btn active" onclick="setRange('day')" id="btn-day">Day</button>
-            <button class="range-btn" onclick="setRange('week')" id="btn-week">Week</button>
-            <button class="range-btn" onclick="setRange('month')" id="btn-month">Month</button>
-        </div>
-
-        <div class="chart-container">
-            <canvas id="mainChart"></canvas>
-        </div>
-
-        <div class="control-card" style="border-color: var(--error-color); background: rgba(207, 102, 121, 0.1);">
-            <div class="control-title" style="color: var(--error-color);"><i class="fas fa-power-off"></i> System Maintenance</div>
-            <div class="control-group">
-                <button onclick="restartSystem()" class="action-btn" style="background-color: var(--error-color);">Restart System Logic</button>
+            <div class="live-data">
+                <div class="data-point">
+                    <div class="data-icon"><i class="fas fa-droplet"></i></div>
+                    <div class="data-label">Humidity</div>
+                    <div class="data-value" id="live-humidity">--%</div>
+                </div>
+                <div class="data-point">
+                    <div class="data-icon"><i class="fas fa-thermometer-half"></i></div>
+                    <div class="data-label">Supply</div>
+                    <div class="data-value" id="live-temp">--°C</div>
+                </div>
+                <div class="data-point">
+                    <div class="data-icon"><i class="fas fa-house"></i></div>
+                    <div class="data-label">Indoor</div>
+                    <div class="data-value" id="live-temp-extract">--°C</div>
+                </div>
+                <div class="data-point">
+                    <div class="data-icon"><i class="fas fa-cloud-sun"></i></div>
+                    <div class="data-label">Outside</div>
+                    <div class="data-value" id="live-temp-outside">--°C</div>
+                </div>
+                <div class="data-point">
+                    <div class="data-icon"><i class="fas fa-arrow-up-from-bracket"></i></div>
+                    <div class="data-label">Exhaust</div>
+                    <div class="data-value" id="live-temp-exhaust">--°C</div>
+                </div>
+                <div class="data-point">
+                    <div class="data-icon"><i class="fas fa-fan"></i></div>
+                    <div class="data-label">Fan RPM</div>
+                    <div class="data-value" id="live-rpm">--</div>
+                </div>
+                <div class="data-point">
+                    <div class="data-icon"><i class="fas fa-gauge-high"></i></div>
+                    <div class="data-label">Fan speed</div>
+                    <div class="data-value" id="live-speed">--</div>
+                </div>
             </div>
-        </div>
-    </div>
+        </section>
+
+        <div id="status-banner" class="status-banner" role="status"></div>
+
+        <section class="control-grid" aria-label="Ventilation controls">
+            <div class="control-card">
+                <div class="control-heading">
+                    <span class="control-heading-icon"><i class="fas fa-sliders"></i></span>
+                    <div>
+                        <div class="control-eyebrow">System</div>
+                        <div class="control-title">Control mode</div>
+                    </div>
+                </div>
+                <div class="field">
+                    <label class="field-label" for="system-mode-select">Active mode</label>
+                    <select id="system-mode-select" onchange="applySystemControlMode()">
+                        <option value="auto">Automatic</option>
+                        <option value="static">Fixed fan speed</option>
+                        <option value="monitor">Monitor only</option>
+                    </select>
+                </div>
+                <div id="static-speed-control-group" class="static-speed-control">
+                    <div class="field">
+                        <label class="field-label" for="static-speed">Target speed</label>
+                        <select id="static-speed" onchange="applyStaticSpeedUpdate()">
+                            <option value="1">1 · Low</option>
+                            <option value="2">2 · Normal</option>
+                            <option value="3">3 · Boost</option>
+                            <option value="4">4 · Maximum</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="mode-status-text" class="mode-status"><i class="fas fa-circle-notch fa-spin"></i> Retrieving mode</div>
+            </div>
+
+            <div class="control-card">
+                <div class="control-heading">
+                    <span class="control-heading-icon"><i class="fas fa-wind"></i></span>
+                    <div>
+                        <div class="control-eyebrow">Temporary override</div>
+                        <div class="control-title">Ventilation boost</div>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <div class="field">
+                        <label class="field-label" for="udluftning-level">Fan speed</label>
+                        <select id="udluftning-level">
+                            <option value="1">1 · Low</option>
+                            <option value="2">2 · Normal</option>
+                            <option value="3" selected>3 · Boost</option>
+                            <option value="4">4 · Maximum</option>
+                        </select>
+                    </div>
+                    <button class="action-btn" onclick="triggerUdluftning()"><i class="fas fa-play"></i>&nbsp; Start 30 min</button>
+                </div>
+                <div class="quick-actions" aria-label="Quick boost durations">
+                    <button class="quick-btn" onclick="triggerQuickBoost(30)">30 min</button>
+                    <button class="quick-btn" onclick="triggerQuickBoost(60)">1 hour</button>
+                    <button class="quick-btn" onclick="triggerQuickBoost(120)">2 hours</button>
+                </div>
+            </div>
+        </section>
+
+        <section class="chart-panel" aria-labelledby="history-title">
+            <div class="chart-header">
+                <div>
+                    <h2 id="history-title">History</h2>
+                    <div class="section-meta">Climate and fan activity</div>
+                </div>
+                <div class="range-controls" aria-label="History range">
+                    <button class="range-btn active" onclick="setRange('day')" id="btn-day">Day</button>
+                    <button class="range-btn" onclick="setRange('week')" id="btn-week">Week</button>
+                    <button class="range-btn" onclick="setRange('month')" id="btn-month">Month</button>
+                </div>
+            </div>
+            <div class="chart-series-controls" aria-label="Visible chart series">
+                <button class="series-toggle active" style="--series-color: #36a2eb" data-series="humidity" aria-pressed="true" onclick="toggleSeries('humidity')"><span class="series-swatch"></span>Humidity</button>
+                <button class="series-toggle active" style="--series-color: #51d2a0" data-series="tempSupply" aria-pressed="true" onclick="toggleSeries('tempSupply')"><span class="series-swatch"></span>Supply</button>
+                <button class="series-toggle active" style="--series-color: #f0b45b" data-series="tempExtract" aria-pressed="true" onclick="toggleSeries('tempExtract')"><span class="series-swatch"></span>Indoor</button>
+                <button class="series-toggle active" style="--series-color: #67a8ff" data-series="tempOutside" aria-pressed="true" onclick="toggleSeries('tempOutside')"><span class="series-swatch"></span>Outside</button>
+                <button class="series-toggle" style="--series-color: #ad8be8" data-series="tempExhaust" aria-pressed="false" onclick="toggleSeries('tempExhaust')"><span class="series-swatch"></span>Exhaust</button>
+                <button class="series-toggle active" style="--series-color: #ef6b73" data-series="rpm" aria-pressed="true" onclick="toggleSeries('rpm')"><span class="series-swatch"></span>RPM</button>
+                <button class="series-toggle" style="--series-color: #f4d35e" data-series="fanSpeed" aria-pressed="false" onclick="toggleSeries('fanSpeed')"><span class="series-swatch"></span>Fan speed</button>
+            </div>
+            <div class="chart-container">
+                <canvas id="mainChart"></canvas>
+            </div>
+        </section>
+
+        <details class="maintenance">
+            <summary>Maintenance</summary>
+            <div class="maintenance-content">
+                <p>Restart the control process and reconnect to the ventilation unit.</p>
+                <button onclick="restartSystem()" class="danger-btn"><i class="fas fa-power-off"></i>&nbsp; Restart system logic</button>
+            </div>
+        </details>
+    </main>
 
     <div id="toast">Notification</div>
 
     <script>
         let chart;
         let currentRange = 'day';
+        const chartSeriesVisibility = {
+            humidity: true,
+            tempSupply: true,
+            tempExtract: true,
+            tempOutside: true,
+            tempExhaust: false,
+            rpm: true,
+            fanSpeed: false
+        };
 
         function setRange(range) {
             currentRange = range;
@@ -220,29 +474,31 @@
             setTimeout(function(){ toast.className = toast.className.replace("show", ""); }, 3000);
         }
 
-        async function fetchData() {
-            const container = document.getElementById('main-container');
-            // Only add loading class if it's a manual refresh (optional, but keeps auto-refresh smooth)
-            // container.classList.add('loading'); 
-            
-            try {
-                // Fetch Live Data
-                const liveResponse = await fetch('api/live');
-                if (liveResponse.ok) {
-                    const liveData = await liveResponse.json();
-                    updateLiveDisplay(liveData);
-                }
+        function setConnectionState(state) {
+            const connection = document.getElementById('connection-state');
+            const label = document.getElementById('connection-label');
+            connection.className = 'connection-state ' + state;
+            label.textContent = state === 'connected' ? 'Connected' : state === 'error' ? 'Offline' : 'Updating';
+        }
 
-                // Fetch History Data
+        async function fetchData() {
+            setConnectionState('updating');
+            try {
+                const liveResponse = await fetch('api/live');
+                if (!liveResponse.ok) throw new Error('Live data unavailable');
+                const liveData = await liveResponse.json();
+                updateLiveDisplay(liveData);
+
                 const response = await fetch('api/history?range=' + currentRange);
+                if (!response.ok) throw new Error('History unavailable');
                 const data = await response.json();
-                
                 updateChart(data);
+                setConnectionState('connected');
+                document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             } catch (error) {
                 console.error('Error fetching data:', error);
-                showToast('Error fetching data', 'error');
-            } finally {
-                // container.classList.remove('loading');
+                setConnectionState('error');
+                showToast(error.message, 'error');
             }
         }
 
@@ -257,25 +513,19 @@
             document.getElementById('live-rpm').textContent = data.rpm;
             document.getElementById('live-speed').textContent = data.fan_speed;
 
-            // Handle temporary notification banner for active boosters / overrides (visually indicate boost activations)
             const banner = document.getElementById('status-banner');
             if (data.manual_override_active) {
-                banner.style.display = 'block';
-                banner.style.borderColor = 'var(--accent-color)';
-                banner.style.background = 'rgba(187, 134, 252, 0.15)';
-                banner.innerHTML = `<i class="fas fa-hourglass-half"></i> &nbsp; <strong>Manual Ventilation Override Active:</strong> Speed ${data.commanded_speed} for another ${Math.ceil(data.manual_override_secs_left / 60)}m`;
+                banner.className = 'status-banner is-visible manual';
+                banner.innerHTML = `<i class="fas fa-hourglass-half"></i><span><strong>Manual override</strong> · Speed ${data.commanded_speed} · ${Math.ceil(data.manual_override_secs_left / 60)} min remaining</span>`;
             } else if (data.boost) {
-                banner.style.display = 'block';
-                banner.style.borderColor = 'var(--success-color)';
-                banner.style.background = 'rgba(3, 218, 198, 0.15)';
-                banner.innerHTML = `<i class="fas fa-shower"></i> &nbsp; <strong>Shower Rapid Humidity Boost Active:</strong> Speed ${data.commanded_speed} for another ${Math.ceil(data.boost_secs_left / 60)}m`;
+                banner.className = 'status-banner is-visible boost';
+                banner.innerHTML = `<i class="fas fa-shower"></i><span><strong>Humidity boost</strong> · Speed ${data.commanded_speed} · ${Math.ceil(data.boost_secs_left / 60)} min remaining</span>`;
             } else if (data.evening_cooling) {
-                banner.style.display = 'block';
-                banner.style.borderColor = 'var(--success-color)';
-                banner.style.background = 'rgba(3, 218, 198, 0.15)';
-                banner.innerHTML = `<i class="fas fa-moon"></i> &nbsp; <strong>Evening Cooling Active:</strong> Speed ${data.evening_cooling_speed}, indoor ${formatTemperature(data.temp_extract)} / outside ${formatTemperature(data.temp_outside)}`;
+                banner.className = 'status-banner is-visible cooling';
+                banner.innerHTML = `<i class="fas fa-moon"></i><span><strong>Evening cooling</strong> · Speed ${data.evening_cooling_speed} · Indoor ${formatTemperature(data.temp_extract)} · Outside ${formatTemperature(data.temp_outside)}</span>`;
             } else {
-                banner.style.display = 'none';
+                banner.className = 'status-banner';
+                banner.textContent = '';
             }
 
             // Only update dropdown control state if user is not actively making updates
@@ -287,19 +537,19 @@
                 if (data.monitor_only) {
                     select.value = 'monitor';
                     staticGroup.style.display = 'none';
-                    modeText.textContent = "👁️ PASSIVE MONITORING mode active: Observing telemetry, fan writes disabled.";
-                    modeText.style.color = "#bb86fc";
+                    modeText.className = 'mode-status monitor';
+                    modeText.innerHTML = '<i class="fas fa-eye"></i> Monitoring telemetry; fan control is disabled.';
                 } else if (data.static_mode) {
                     select.value = 'static';
                     staticGroup.style.display = 'flex';
                     document.getElementById('static-speed').value = data.static_speed;
-                    modeText.textContent = `📍 STATIC MODE active: Fans held continuously at Speed ${data.static_speed}.`;
-                    modeText.style.color = "#03dac6";
+                    modeText.className = 'mode-status static';
+                    modeText.innerHTML = `<i class="fas fa-lock"></i> Fan held continuously at speed ${data.static_speed}.`;
                 } else {
                     select.value = 'auto';
                     staticGroup.style.display = 'none';
-                    modeText.textContent = "🤖 AUTONOMOUS mode active: Speed adjusts for humidity, evening cooling, and night schedule.";
-                    modeText.style.color = "#03dac6";
+                    modeText.className = 'mode-status auto';
+                    modeText.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> Fan adjusts for humidity, cooling, and night schedule.';
                 }
             }
         }
@@ -308,14 +558,41 @@
             return Number.isFinite(value) ? value.toFixed(1) + '°C' : '--°C';
         }
 
+        function toggleSeries(seriesKey) {
+            const visible = !chartSeriesVisibility[seriesKey];
+            chartSeriesVisibility[seriesKey] = visible;
+
+            const button = document.querySelector(`[data-series="${seriesKey}"]`);
+            button.classList.toggle('active', visible);
+            button.setAttribute('aria-pressed', String(visible));
+
+            if (chart) {
+                const dataset = chart.data.datasets.find(item => item.seriesKey === seriesKey);
+                if (dataset) dataset.hidden = !visible;
+                syncChartAxes();
+                chart.update();
+            }
+        }
+
+        function syncChartAxes() {
+            if (!chart) return;
+            chart.options.scales.y.display = ['humidity', 'tempSupply', 'tempExtract', 'tempOutside', 'tempExhaust']
+                .some(seriesKey => chartSeriesVisibility[seriesKey]);
+            chart.options.scales.y1.display = chartSeriesVisibility.rpm;
+            chart.options.scales.y2.display = chartSeriesVisibility.fanSpeed;
+        }
+
         function updateChart(data) {
             const ctx = document.getElementById('mainChart').getContext('2d');
             
-            // Data processing
             const timestamps = data.map(d => d.timestamp);
             const humidity = data.map(d => d.humidity);
             const rpm = data.map(d => d.rpm);
-            const temp = data.map(d => d.temp);
+            const fanSpeed = data.map(d => d.fan_speed);
+            const tempSupply = data.map(d => d.temp_supply ?? d.temp);
+            const tempExtract = data.map(d => d.temp_extract);
+            const tempOutside = data.map(d => d.temp_outside);
+            const tempExhaust = data.map(d => d.temp_exhaust);
 
             if (chart) {
                 chart.destroy();
@@ -327,31 +604,82 @@
                     labels: timestamps,
                     datasets: [
                         {
+                            seriesKey: 'humidity',
                             label: 'Humidity (%)',
                             data: humidity,
-                            borderColor: 'rgb(54, 162, 235)',
+                            borderColor: '#36a2eb',
                             yAxisID: 'y',
                             tension: 0.4,
                             pointRadius: 0,
-                            borderWidth: 2
+                            borderWidth: 2,
+                            hidden: !chartSeriesVisibility.humidity
                         },
                         {
+                            seriesKey: 'tempSupply',
+                            label: 'Supply (°C)',
+                            data: tempSupply,
+                            borderColor: '#51d2a0',
+                            yAxisID: 'y',
+                            tension: 0.4,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                            hidden: !chartSeriesVisibility.tempSupply
+                        },
+                        {
+                            seriesKey: 'tempExtract',
+                            label: 'Indoor (°C)',
+                            data: tempExtract,
+                            borderColor: '#f0b45b',
+                            yAxisID: 'y',
+                            tension: 0.4,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                            hidden: !chartSeriesVisibility.tempExtract
+                        },
+                        {
+                            seriesKey: 'tempOutside',
+                            label: 'Outside (°C)',
+                            data: tempOutside,
+                            borderColor: '#67a8ff',
+                            yAxisID: 'y',
+                            tension: 0.4,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                            hidden: !chartSeriesVisibility.tempOutside
+                        },
+                        {
+                            seriesKey: 'tempExhaust',
+                            label: 'Exhaust (°C)',
+                            data: tempExhaust,
+                            borderColor: '#ad8be8',
+                            yAxisID: 'y',
+                            tension: 0.4,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                            hidden: !chartSeriesVisibility.tempExhaust
+                        },
+                        {
+                            seriesKey: 'rpm',
                             label: 'Fan RPM',
                             data: rpm,
-                            borderColor: 'rgb(255, 99, 132)',
+                            borderColor: '#ef6b73',
                             yAxisID: 'y1',
                             tension: 0.4,
                             pointRadius: 0,
-                            borderWidth: 2
+                            borderWidth: 2,
+                            hidden: !chartSeriesVisibility.rpm
                         },
                         {
-                            label: 'Supply Temp (°C)',
-                            data: temp,
-                            borderColor: 'rgb(75, 192, 192)',
-                            yAxisID: 'y',
-                            tension: 0.4,
+                            seriesKey: 'fanSpeed',
+                            label: 'Fan speed',
+                            data: fanSpeed,
+                            borderColor: '#f4d35e',
+                            yAxisID: 'y2',
+                            stepped: true,
                             pointRadius: 0,
-                            borderWidth: 2
+                            borderWidth: 2,
+                            borderDash: [5, 3],
+                            hidden: !chartSeriesVisibility.fanSpeed
                         }
                     ]
                 },
@@ -364,7 +692,7 @@
                     },
                     plugins: {
                         legend: {
-                            labels: { color: '#e0e0e0', font: { family: 'Inter' } }
+                            display: false
                         },
                         tooltip: {
                             backgroundColor: 'rgba(30, 30, 30, 0.9)',
@@ -390,12 +718,18 @@
                                 text: 'Time',
                                 color: '#b0b0b0'
                             },
-                            ticks: { color: '#b0b0b0' },
+                            ticks: {
+                                color: '#b0b0b0',
+                                autoSkip: true,
+                                maxRotation: 0,
+                                maxTicksLimit: window.innerWidth <= 720 ? 3 : 8
+                            },
                             grid: { color: 'rgba(255, 255, 255, 0.05)' }
                         },
                         y: {
                             type: 'linear',
-                            display: true,
+                            display: ['humidity', 'tempSupply', 'tempExtract', 'tempOutside', 'tempExhaust']
+                                .some(seriesKey => chartSeriesVisibility[seriesKey]),
                             position: 'left',
                             title: {
                                 display: true,
@@ -407,7 +741,7 @@
                         },
                         y1: {
                             type: 'linear',
-                            display: true,
+                            display: chartSeriesVisibility.rpm,
                             position: 'right',
                             suggestedMin: 0,
                             suggestedMax: 4000,
@@ -419,6 +753,20 @@
                                 color: '#b0b0b0'
                             }
                         },
+                        y2: {
+                            type: 'linear',
+                            display: chartSeriesVisibility.fanSpeed,
+                            position: 'right',
+                            suggestedMin: 0,
+                            suggestedMax: 4,
+                            ticks: { color: '#b0b0b0', stepSize: 1 },
+                            grid: { drawOnChartArea: false },
+                            title: {
+                                display: true,
+                                text: 'Speed',
+                                color: '#b0b0b0'
+                            }
+                        }
                     }
                 }
             });
@@ -451,13 +799,13 @@
                 });
                 if (res.ok) {
                     const data = await res.json();
-                    showToast(`✅ Ventilation started: Speed ${data.level} for ${data.minutes}m`, 'success');
+                    showToast(`Ventilation started · Speed ${data.level} · ${data.minutes} min`, 'success');
                     fetchData();
                 } else {
-                    showToast('❌ Failed to set Ventilation', 'error');
+                    showToast('Failed to start ventilation', 'error');
                 }
             } catch (e) {
-                showToast('❌ Error: ' + e.message, 'error');
+                showToast('Error: ' + e.message, 'error');
             } finally {
                 btns.forEach(b => b.disabled = false);
             }
@@ -484,9 +832,9 @@
                             body: JSON.stringify({ monitor_only: true })
                         });
                         if (monitorRes.ok) {
-                            showToast('👁️ Passive Monitoring Mode Enabled', 'success');
+                            showToast('Monitor-only mode enabled', 'success');
                         } else {
-                            showToast('❌ Failed to update Operation Mode', 'error');
+                            showToast('Failed to update control mode', 'error');
                         }
                     } else if (mode === 'auto') {
                         // Turn off static mode
@@ -504,13 +852,13 @@
                         });
                         
                         if (staticRes.ok && monitorRes.ok) {
-                            showToast('🤖 Autonomous Humidity Control Enabled', 'success');
+                            showToast('Automatic control enabled', 'success');
                         } else {
-                            showToast('❌ Failed to enable Auto Control', 'error');
+                            showToast('Failed to enable automatic control', 'error');
                         }
                     }
                 } catch (e) {
-                    showToast('❌ Communication Error: ' + e.message, 'error');
+                    showToast('Communication error: ' + e.message, 'error');
                 }
             }
             
@@ -536,12 +884,12 @@
                 });
 
                 if (staticRes.ok && monitorRes.ok) {
-                    showToast(`📍 Continuous Speed Lock updated: Speed ${speed}`, 'success');
+                    showToast(`Fixed fan speed set to ${speed}`, 'success');
                 } else {
-                    showToast('❌ Failed to configure static speed', 'error');
+                    showToast('Failed to set fixed fan speed', 'error');
                 }
             } catch (e) {
-                showToast('❌ Error: ' + e.message, 'error');
+                showToast('Error: ' + e.message, 'error');
             }
         }
 
@@ -552,12 +900,12 @@
             try {
                 const res = await fetch('api/system/restart', { method: 'POST' });
                 if (res.ok) {
-                    showToast('✅ Restart sequence initiated', 'success');
+                    showToast('Restart sequence initiated', 'success');
                 } else {
-                    showToast('❌ Restart failed', 'error');
+                    showToast('Restart failed', 'error');
                 }
             } catch (e) {
-                showToast('❌ Error: ' + e.message, 'error');
+                showToast('Error: ' + e.message, 'error');
             }
         }
     </script>

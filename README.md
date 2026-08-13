@@ -8,6 +8,8 @@ A Java-based client for communicating with Genvex ventilation systems (specifica
 
 ![Dashboard Demo](demo_image.png)
 
+The history graph can independently show or hide humidity, supply, indoor/extract, outside, and exhaust temperatures, fan RPM, and fan speed across day, week, and month ranges.
+
 ## Protocol Details
 
 The communication uses UDP on port 5570.
@@ -68,7 +70,7 @@ java ConnectGenvex
 A dedicated background service (`HumidityMonitor`) is available to automate fan speed based on humidity levels and time of day.
 
 ### Features
-1.  **Data Logging**: Polls humidity, temperature, and RPM every 30 seconds and stores it in a SQLite database.
+1.  **Data Logging**: Polls humidity, all four air temperatures, fan RPM, and fan speed every 30 seconds and stores them in a SQLite database.
 2.  **Boost Mode**: Automatically detects rapid humidity rises (e.g., during a shower) and boosts fan speed to Level 3 for 15 minutes.
 3.  **Night Mode**: Forces fan speed to Level 1 (Low) between 23:00 and 06:30 for quiet operation.
 4.  **Evening Cooling**: After sunset, uses cooler outside/supply air at speed 2 and escalates to speed 3 if indoor temperature does not improve.

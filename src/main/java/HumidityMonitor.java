@@ -127,14 +127,41 @@ public class HumidityMonitor {
                      "timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, " +
                      "humidity INTEGER, " +
                      "temp_supply REAL, " +
-                     "fan_rpm INTEGER)";
+                     "temp_outside REAL, " +
+                     "temp_exhaust REAL, " +
+                     "temp_extract REAL, " +
+                     "fan_rpm INTEGER, " +
+                     "fan_speed_level INTEGER)";
         
         try (Connection conn = DriverManager.getConnection(DB_URL);
              Statement stmt = conn.createStatement()) {
             stmt.execute(sql);
+            ensureHistoryColumns(conn);
             log("Database initialized at " + DB_PATH);
         } catch (SQLException e) {
             logError("Failed to initialize database: " + e.getMessage());
+        }
+    }
+
+    static void ensureHistoryColumns(Connection conn) throws SQLException {
+        addColumnIfMissing(conn, "temp_outside", "REAL");
+        addColumnIfMissing(conn, "temp_exhaust", "REAL");
+        addColumnIfMissing(conn, "temp_extract", "REAL");
+        addColumnIfMissing(conn, "fan_speed_level", "INTEGER");
+    }
+
+    private static void addColumnIfMissing(Connection conn, String columnName, String columnType) throws SQLException {
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("PRAGMA table_info(humidity_readings)")) {
+            while (rs.next()) {
+                if (columnName.equals(rs.getString("name"))) {
+                    return;
+                }
+            }
+        }
+
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("ALTER TABLE humidity_readings ADD COLUMN " + columnName + " " + columnType);
         }
     }
 
@@ -294,7 +321,8 @@ public class HumidityMonitor {
             
             StringBuilder json = new StringBuilder("[");
             // Use datetime filter and sort ASC for chart
-            String sql = "SELECT timestamp, humidity, temp_supply, fan_rpm FROM humidity_readings " +
+            String sql = "SELECT timestamp, humidity, temp_supply, temp_outside, temp_exhaust, temp_extract, " +
+                         "fan_rpm, fan_speed_level FROM humidity_readings " +
                          "WHERE timestamp >= datetime('now', '" + timeFilter + "') " +
                          "ORDER BY timestamp ASC";
 
@@ -312,12 +340,18 @@ public class HumidityMonitor {
                         
                         String ts = rs.getString("timestamp"); // SQLite returns string
                         int humidity = rs.getInt("humidity");
-                        double temp = rs.getDouble("temp_supply");
                         int rpm = rs.getInt("fan_rpm");
+                        String tempSupply = nullableJsonNumber(rs, "temp_supply");
+                        String tempOutside = nullableJsonNumber(rs, "temp_outside");
+                        String tempExhaust = nullableJsonNumber(rs, "temp_exhaust");
+                        String tempExtract = nullableJsonNumber(rs, "temp_extract");
+                        String fanSpeed = nullableJsonInteger(rs, "fan_speed_level");
 
                         json.append(String.format(Locale.ROOT,
-                            "{\"timestamp\":\"%s\", \"humidity\":%d, \"temp\":%.1f, \"rpm\":%d}",
-                            ts, humidity, temp, rpm
+                            "{\"timestamp\":\"%s\", \"humidity\":%d, \"temp\":%s, \"temp_supply\":%s, " +
+                            "\"temp_outside\":%s, \"temp_exhaust\":%s, \"temp_extract\":%s, " +
+                            "\"rpm\":%d, \"fan_speed\":%s}",
+                            ts, humidity, tempSupply, tempSupply, tempOutside, tempExhaust, tempExtract, rpm, fanSpeed
                         ));
                     }
                     counter++;
@@ -332,6 +366,16 @@ public class HumidityMonitor {
 
             json.append("]");
             sendJson(t, json.toString());
+        }
+
+        private static String nullableJsonNumber(ResultSet rs, String columnName) throws SQLException {
+            double value = rs.getDouble(columnName);
+            return rs.wasNull() ? "null" : String.format(Locale.ROOT, "%.1f", value);
+        }
+
+        private static String nullableJsonInteger(ResultSet rs, String columnName) throws SQLException {
+            int value = rs.getInt(columnName);
+            return rs.wasNull() ? "null" : String.valueOf(value);
         }
     }
 
@@ -390,7 +434,7 @@ public class HumidityMonitor {
             lastExtractTemp = tempExtract;
             lastRpm = supplyRpm;
 
-            if (saveToDatabase(humidity, tempSupply, supplyRpm)) {
+            if (saveToDatabase(humidity, tempSupply, tempOutside, tempExhaust, tempExtract, supplyRpm, currentFanSpeed)) {
                 log("Logged: Humidity=" + humidity + "%, Temp=" + tempSupply + "C, RPM=" + supplyRpm + 
                     (boostActive ? " [BOOST ACTIVE]" : "") + (isDefrosting ? " [DEFROSTING]" : ""));
             } else {
@@ -846,15 +890,21 @@ public class HumidityMonitor {
         }
     }
 
-    private boolean saveToDatabase(int humidity, double tempSupply, int rpm) {
-        String sql = "INSERT INTO humidity_readings (humidity, temp_supply, fan_rpm) VALUES (?, ?, ?)";
+    private boolean saveToDatabase(int humidity, double tempSupply, double tempOutside, double tempExhaust,
+            double tempExtract, int rpm, int fanSpeed) {
+        String sql = "INSERT INTO humidity_readings (humidity, temp_supply, temp_outside, temp_exhaust, " +
+                     "temp_extract, fan_rpm, fan_speed_level) VALUES (?, ?, ?, ?, ?, ?, ?)";
 
         try (Connection conn = DriverManager.getConnection(DB_URL);
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
             pstmt.setInt(1, humidity);
             pstmt.setDouble(2, tempSupply);
-            pstmt.setInt(3, rpm);
+            setNullableDouble(pstmt, 3, tempOutside);
+            setNullableDouble(pstmt, 4, tempExhaust);
+            setNullableDouble(pstmt, 5, tempExtract);
+            pstmt.setInt(6, rpm);
+            pstmt.setInt(7, fanSpeed);
             pstmt.executeUpdate();
             
             if (dbErrorCount > 0) {
@@ -871,6 +921,14 @@ public class HumidityMonitor {
                 logError("Database error: " + e.getMessage() + " (Suppressing further DB errors)");
             }
             return false;
+        }
+    }
+
+    private static void setNullableDouble(PreparedStatement pstmt, int parameterIndex, double value) throws SQLException {
+        if (Double.isFinite(value)) {
+            pstmt.setDouble(parameterIndex, value);
+        } else {
+            pstmt.setNull(parameterIndex, java.sql.Types.REAL);
         }
     }
 

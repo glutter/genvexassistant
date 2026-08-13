@@ -4,6 +4,9 @@ CREATE TABLE IF NOT EXISTS humidity_readings (
     timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     humidity INTEGER NOT NULL,
     temp_supply DECIMAL(4,1),
+    temp_outside DECIMAL(4,1),
+    temp_exhaust DECIMAL(4,1),
+    temp_extract DECIMAL(4,1),
     fan_speed_level INTEGER,
     fan_rpm INTEGER
 );
