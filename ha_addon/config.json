@@ -1,6 +1,7 @@
 {
   "name": "Genvex Humidity Monitor",
   "version": "1.42",
+    "version": "1.43",
   "slug": "genvex_monitor",
   "description": "Java-based Genvex Ventilation Control and Monitoring",
   "url": "https://github.com/lutherh/genvexassistant",

@@ -102,10 +102,11 @@ public class ConnectGenvex {
                 int dutySupply = readDatapoint(socket, address, clientId, newServerId, nextSeq++, 18);
                 int rpmSupply = readDatapoint(socket, address, clientId, newServerId, nextSeq++, 35);
                 int fanSpeedRead = readDatapoint(socket, address, clientId, newServerId, nextSeq++, 7); // Known to be 0
+                int tempSensorOffsetRaw = Integer.parseInt(System.getenv().getOrDefault("TEMP_SUPPLY_OFFSET_RAW", "-300"));
                 
                 System.out.println("--- Status ---");
-                System.out.println("Temp Supply: " + (tempSupply / 10.0) + " C");
-                System.out.println("Temp Outside: " + (tempOutside / 10.0) + " C");
+                System.out.println("Temp Supply: " + HumidityMonitor.rawTemperature(tempSupply, tempSensorOffsetRaw) + " C");
+                System.out.println("Temp Outside: " + HumidityMonitor.rawTemperature(tempOutside, tempSensorOffsetRaw) + " C");
                 System.out.println("Humidity: " + humidity + " %");
                 System.out.println("Fan Speed (Duty): " + (dutySupply / 100) + " %");
                 System.out.println("Fan RPM: " + rpmSupply);

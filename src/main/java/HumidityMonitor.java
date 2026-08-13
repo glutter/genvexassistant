@@ -362,11 +362,11 @@ public class HumidityMonitor {
 
             checkBoostLogic(humidity);
 
-            int tempSupplyOffsetRaw = Integer.parseInt(System.getenv().getOrDefault("TEMP_SUPPLY_OFFSET_RAW", "-300"));
-            double tempSupply = (tempSupplyRaw + tempSupplyOffsetRaw) / 10.0;
-            double tempOutside = rawTemperature(tempOutsideRaw);
-            double tempExhaust = rawTemperature(tempExhaustRaw);
-            double tempExtract = rawTemperature(tempExtractRaw);
+            int tempSensorOffsetRaw = Integer.parseInt(System.getenv().getOrDefault("TEMP_SUPPLY_OFFSET_RAW", "-300"));
+            double tempSupply = rawTemperature(tempSupplyRaw, tempSensorOffsetRaw);
+            double tempOutside = rawTemperature(tempOutsideRaw, tempSensorOffsetRaw);
+            double tempExhaust = rawTemperature(tempExhaustRaw, tempSensorOffsetRaw);
+            double tempExtract = rawTemperature(tempExtractRaw, tempSensorOffsetRaw);
 
             // Defrost Detection
             boolean isDefrosting = false;
@@ -630,8 +630,8 @@ public class HumidityMonitor {
         return isTimeInRange(time, LocalTime.NOON, NIGHT_START);
     }
 
-    private double rawTemperature(int rawValue) {
-        return rawValue == -1 ? Double.NaN : rawValue / 10.0;
+    static double rawTemperature(int rawValue, int offsetRaw) {
+        return rawValue == -1 ? Double.NaN : (rawValue + offsetRaw) / 10.0;
     }
     
     class RestartApiHandler implements HttpHandler {

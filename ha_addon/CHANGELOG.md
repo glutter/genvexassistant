@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.43
+
+- Fixed outside, exhaust, and extract/indoor temperatures displaying 30°C too high by applying the configured raw calibration offset consistently to all temperature registers.
+- Added regression coverage for the reported readings: 18.4°C supply, 24.0°C indoor/extract, 17.2°C outside, and 19.7°C exhaust.
+- Applied the same shared calibration to the standalone status API and clarified the legacy `temp_supply_offset_raw` option semantics.
+
 ## 1.42
 
 - Added configurable indoor cooling triggers: `cooling_start_temp` starts evening cooling and `cooling_stop_temp` stops it, allowing users to tune comfort and noise independently.

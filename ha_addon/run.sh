@@ -36,7 +36,7 @@ echo "  Genvex IP: $GENVEX_IP"
 echo "  Poll Interval: $POLL_INTERVAL s"
 echo "  Monitor Only: $MONITOR_ONLY"
 echo "  Boost Enabled: $BOOST_ENABLED"
-echo "  Supply Temp Offset Raw: $TEMP_SUPPLY_OFFSET_RAW"
+echo "  Temperature Sensor Offset Raw: $TEMP_SUPPLY_OFFSET_RAW"
 echo "  Evening Cooling: $EVENING_COOLING_ENABLED (start $COOLING_START_TEMP C, stop $COOLING_STOP_TEMP C, supply floor $COOLING_MIN_SUPPLY_TEMP C)"
 
 # Start the Java application

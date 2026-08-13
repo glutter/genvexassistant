@@ -54,6 +54,7 @@ public class GenvexServer {
                 int humidity = client.readDatapoint(26);
                 int dutySupply = client.readDatapoint(18);
                 int rpmSupply = client.readDatapoint(35);
+                int tempSensorOffsetRaw = Integer.parseInt(System.getenv().getOrDefault("TEMP_SUPPLY_OFFSET_RAW", "-300"));
 
                 String json = String.format(
                     "{" +
@@ -63,8 +64,8 @@ public class GenvexServer {
                     "\"fan_duty\": %d," +
                     "\"fan_rpm\": %d" +
                     "}",
-                    tempSupply / 10.0,
-                    tempOutside / 10.0,
+                    HumidityMonitor.rawTemperature(tempSupply, tempSensorOffsetRaw),
+                    HumidityMonitor.rawTemperature(tempOutside, tempSensorOffsetRaw),
                     humidity,
                     dutySupply / 100,
                     rpmSupply

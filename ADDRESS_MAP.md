@@ -18,10 +18,10 @@ This document lists the known Micro Nabto addresses for the Genvex Optima 270 ve
 | **Extract Fan Duty** | **19** | % (Raw / 100) | |
 | **Supply Fan RPM** | **35** | RPM | E.g., `1068` RPM. |
 | **Extract Fan RPM** | **36** | RPM | |
-| **Temp Supply** | **20** | °C (Raw / 10) | E.g., `442` = 44.2°C. |
-| **Temp Outside** | **21** | °C (Raw / 10) | |
-| **Temp Exhaust** | **22** | °C (Raw / 10) | |
-| **Temp Extract** | **23** | °C (Raw / 10) | |
+| **Temp Supply** | **20** | °C ((Raw + offset) / 10) | Shared default offset is `-300`. |
+| **Temp Outside** | **21** | °C ((Raw + offset) / 10) | Shared default offset is `-300`. |
+| **Temp Exhaust** | **22** | °C ((Raw + offset) / 10) | Shared default offset is `-300`. |
+| **Temp Extract** | **23** | °C ((Raw + offset) / 10) | Shared default offset is `-300`. |
 | **Humidity** | **26** | % | E.g., `58` = 58%. |
 
 ## Other Potential Addresses (Unverified)

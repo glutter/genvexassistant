@@ -45,7 +45,7 @@ Before starting, configure the add-on in the **Configuration** tab:
 - `humidity_low_threshold`: Humidity level to trigger low speed (default: 30).
 - `night_start`: Start time for night mode (HH:mm, default: 23:00).
 - `night_end`: End time for night mode (HH:mm, default: 06:30).
-- `temp_supply_offset_raw`: Calibration offset for supply temperature (raw value, default: -300).
+- `temp_supply_offset_raw`: Shared calibration offset for supply, outside, exhaust, and extract temperatures (legacy option name; raw value, default: -300).
 - `evening_cooling_enabled`: Enables cooling with cooler outside air after sunset (default: true).
 - `cooling_stop_temp`: Indoor/extract temperature where cooling stops in °C (default: 22.0).
 - `cooling_start_temp`: Indoor/extract temperature where cooling starts in °C (default: 22.5; must not be lower than `cooling_stop_temp`).

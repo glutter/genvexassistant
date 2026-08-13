@@ -90,7 +90,7 @@ A dedicated background service (`HumidityMonitor`) is available to automate fan 
     - `GENVEX_EMAIL`: Email/password for Genvex connection
     - `POLL_INTERVAL`: Polling interval in seconds (default: 30)
     - `MONITOR_ONLY`: Disable automatic fan writes for passive monitoring (default: false)
-    - `TEMP_SUPPLY_OFFSET_RAW`: Temperature calibration offset (default: -300)
+    - `TEMP_SUPPLY_OFFSET_RAW`: Shared raw calibration offset for all temperature sensors (legacy name, default: -300)
     - `EVENING_COOLING_ENABLED`: Enable sunset-aware cooling (default: true)
     - `COOLING_STOP_TEMP`: Indoor/extract temperature where cooling stops in °C (default: 22.0)
     - `COOLING_START_TEMP`: Indoor/extract temperature where cooling starts in °C (default: 22.5; must be at least the stop temperature)
