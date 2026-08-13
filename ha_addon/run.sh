@@ -22,7 +22,8 @@ if [ -f "$CONFIG_PATH" ]; then
     export NIGHT_END=$(jq --raw-output '.night_end' $CONFIG_PATH)
     export TEMP_SUPPLY_OFFSET_RAW=$(jq --raw-output '.temp_supply_offset_raw // -300' $CONFIG_PATH)
     export EVENING_COOLING_ENABLED=$(jq --raw-output 'if has("evening_cooling_enabled") then .evening_cooling_enabled else true end' $CONFIG_PATH)
-    export COOLING_TARGET_TEMP=$(jq --raw-output '.cooling_target_temp // 22.0' $CONFIG_PATH)
+    export COOLING_STOP_TEMP=$(jq --raw-output '.cooling_stop_temp // .cooling_target_temp // 22.0' $CONFIG_PATH)
+    export COOLING_START_TEMP=$(jq --raw-output '.cooling_start_temp // ((.cooling_target_temp // 22.0) + 0.5)' $CONFIG_PATH)
     export COOLING_MIN_SUPPLY_TEMP=$(jq --raw-output '.cooling_min_supply_temp // 15.0' $CONFIG_PATH)
     export COOLING_FALLBACK_START=$(jq --raw-output '.cooling_fallback_start // "18:00"' $CONFIG_PATH)
     export COOLING_ESCALATION_MINUTES=$(jq --raw-output '.cooling_escalation_minutes // 30' $CONFIG_PATH)
@@ -36,7 +37,7 @@ echo "  Poll Interval: $POLL_INTERVAL s"
 echo "  Monitor Only: $MONITOR_ONLY"
 echo "  Boost Enabled: $BOOST_ENABLED"
 echo "  Supply Temp Offset Raw: $TEMP_SUPPLY_OFFSET_RAW"
-echo "  Evening Cooling: $EVENING_COOLING_ENABLED (target $COOLING_TARGET_TEMP C, supply floor $COOLING_MIN_SUPPLY_TEMP C)"
+echo "  Evening Cooling: $EVENING_COOLING_ENABLED (start $COOLING_START_TEMP C, stop $COOLING_STOP_TEMP C, supply floor $COOLING_MIN_SUPPLY_TEMP C)"
 
 # Start the Java application
 exec java -Djava.net.preferIPv4Stack=true -jar /app/app.jar

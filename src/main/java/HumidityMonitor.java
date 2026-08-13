@@ -56,7 +56,10 @@ public class HumidityMonitor {
 
     // Evening Cooling Configuration
     private static final boolean EVENING_COOLING_ENABLED = Boolean.parseBoolean(System.getenv().getOrDefault("EVENING_COOLING_ENABLED", "true"));
-    private static final double COOLING_TARGET_TEMP = Double.parseDouble(System.getenv().getOrDefault("COOLING_TARGET_TEMP", "22.0"));
+    private static final double COOLING_STOP_TEMP = Double.parseDouble(System.getenv().getOrDefault(
+            "COOLING_STOP_TEMP", System.getenv().getOrDefault("COOLING_TARGET_TEMP", "22.0")));
+    private static final double COOLING_START_TEMP = Double.parseDouble(System.getenv().getOrDefault(
+            "COOLING_START_TEMP", String.valueOf(COOLING_STOP_TEMP + 0.5)));
     private static final double COOLING_MIN_SUPPLY_TEMP = Double.parseDouble(System.getenv().getOrDefault("COOLING_MIN_SUPPLY_TEMP", "15.0"));
     private static final LocalTime COOLING_FALLBACK_START = LocalTime.parse(System.getenv().getOrDefault("COOLING_FALLBACK_START", "18:00"));
     private static final long COOLING_ESCALATION_MS = Integer.parseInt(System.getenv().getOrDefault("COOLING_ESCALATION_MINUTES", "30")) * 60 * 1000L;
@@ -104,6 +107,11 @@ public class HumidityMonitor {
         startWebServer();
 
         log("Starting polling service with Session ID: " + sessionId);
+        if (COOLING_START_TEMP < COOLING_STOP_TEMP) {
+            logError(String.format(Locale.ROOT,
+                "Evening cooling disabled: start temperature %.1fC must be at least stop temperature %.1fC.",
+                COOLING_START_TEMP, COOLING_STOP_TEMP));
+        }
 
         // Run with fixed delay to allow natural drift and prevent lock-step collisions
         scheduler.scheduleWithFixedDelay(this::pollAndStore, 0, POLL_INTERVAL, TimeUnit.SECONDS);
@@ -553,7 +561,7 @@ public class HumidityMonitor {
             COOLING_ESCALATION_MS, COOLING_PROGRESS_C);
         int selectedSpeed = EveningCoolingPolicy.selectSpeed(
             eveningCoolingSpeed, tempSupply, tempOutside, tempExtract,
-                COOLING_TARGET_TEMP, COOLING_MIN_SUPPLY_TEMP, stalled);
+                COOLING_STOP_TEMP, COOLING_START_TEMP, COOLING_MIN_SUPPLY_TEMP, stalled);
 
         if (selectedSpeed == 0) {
             if (eveningCoolingActive) {

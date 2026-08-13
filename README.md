@@ -71,7 +71,7 @@ A dedicated background service (`HumidityMonitor`) is available to automate fan 
 1.  **Data Logging**: Polls humidity, temperature, and RPM every 30 seconds and stores it in a SQLite database.
 2.  **Boost Mode**: Automatically detects rapid humidity rises (e.g., during a shower) and boosts fan speed to Level 3 for 15 minutes.
 3.  **Night Mode**: Forces fan speed to Level 1 (Low) between 23:00 and 06:30 for quiet operation.
-4.  **Evening Cooling**: After sunset, uses cooler outside/supply air at speed 2 and escalates to speed 3 if the indoor/outdoor delta does not improve.
+4.  **Evening Cooling**: After sunset, uses cooler outside/supply air at speed 2 and escalates to speed 3 if indoor temperature does not improve.
 5.  **General Control**:
     *   **> 60% Humidity**: Speed 3 (High)
     *   **< 30% Humidity**: Speed 1 (Low)
@@ -92,7 +92,8 @@ A dedicated background service (`HumidityMonitor`) is available to automate fan 
     - `MONITOR_ONLY`: Disable automatic fan writes for passive monitoring (default: false)
     - `TEMP_SUPPLY_OFFSET_RAW`: Temperature calibration offset (default: -300)
     - `EVENING_COOLING_ENABLED`: Enable sunset-aware cooling (default: true)
-    - `COOLING_TARGET_TEMP`: Indoor/extract target in °C (default: 22.0)
+    - `COOLING_STOP_TEMP`: Indoor/extract temperature where cooling stops in °C (default: 22.0)
+    - `COOLING_START_TEMP`: Indoor/extract temperature where cooling starts in °C (default: 22.5; must be at least the stop temperature)
     - `COOLING_MIN_SUPPLY_TEMP`: Supply-air comfort floor in °C (default: 15.0)
     - `COOLING_FALLBACK_START`: Start time when Home Assistant sunset state is unavailable (default: 18:00)
     - `COOLING_ESCALATION_MINUTES`: Time without 0.3°C delta improvement before speed 3 (default: 30)

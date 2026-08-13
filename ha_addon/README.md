@@ -47,7 +47,8 @@ Before starting, configure the add-on in the **Configuration** tab:
 - `night_end`: End time for night mode (HH:mm, default: 06:30).
 - `temp_supply_offset_raw`: Calibration offset for supply temperature (raw value, default: -300).
 - `evening_cooling_enabled`: Enables cooling with cooler outside air after sunset (default: true).
-- `cooling_target_temp`: Indoor/extract temperature target in °C (default: 22.0).
+- `cooling_stop_temp`: Indoor/extract temperature where cooling stops in °C (default: 22.0).
+- `cooling_start_temp`: Indoor/extract temperature where cooling starts in °C (default: 22.5; must not be lower than `cooling_stop_temp`).
 - `cooling_min_supply_temp`: Minimum supply temperature allowed for cooling in °C (default: 15.0).
 - `cooling_fallback_start`: Cooling start when Home Assistant sunset state is unavailable (default: 18:00).
 - `cooling_escalation_minutes`: Minutes without meaningful delta improvement before speed 3 (default: 30).

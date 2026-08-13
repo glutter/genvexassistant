@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.42
+
+- Added configurable indoor cooling triggers: `cooling_start_temp` starts evening cooling and `cooling_stop_temp` stops it, allowing users to tune comfort and noise independently.
+- Preserved existing behavior with defaults of 22.5°C to start and 22.0°C to stop, including automatic migration from the previous `cooling_target_temp` setting.
+- Invalid ranges fail closed and log a clear error instead of running cooling without hysteresis.
+
 ## 1.41
 
 - Added sunset-aware evening cooling using supply, outside, and extract/indoor temperatures. Cooling runs until quiet night mode, starts at speed 2, latches at speed 3 after insufficient progress, and stops with temperature deadbands as indoor/outdoor conditions converge.

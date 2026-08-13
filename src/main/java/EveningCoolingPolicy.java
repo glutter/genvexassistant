@@ -1,13 +1,12 @@
 final class EveningCoolingPolicy {
-    private static final double START_TEMPERATURE_DEADBAND_C = 0.5;
     private static final double START_OUTSIDE_ADVANTAGE_C = 2.0;
     private static final double CONTINUE_OUTSIDE_ADVANTAGE_C = 1.0;
     private static final double START_SUPPLY_ADVANTAGE_C = 1.0;
     private static final double CONTINUE_SUPPLY_ADVANTAGE_C = 0.5;
     private static final double IMMEDIATE_HIGH_SPEED_DELTA_C = 6.0;
     private static final double CONTINUE_HIGH_SPEED_DELTA_C = 5.5;
-    private static final double IMMEDIATE_HIGH_SPEED_OVER_TARGET_C = 3.0;
-    private static final double CONTINUE_HIGH_SPEED_OVER_TARGET_C = 2.5;
+    private static final double IMMEDIATE_HIGH_SPEED_OVER_START_C = 2.5;
+    private static final double CONTINUE_HIGH_SPEED_OVER_START_C = 2.0;
 
     private EveningCoolingPolicy() {
     }
@@ -17,21 +16,23 @@ final class EveningCoolingPolicy {
             double supplyTemp,
             double outsideTemp,
             double extractTemp,
-            double targetIndoorTemp,
+            double stopIndoorTemp,
+            double startIndoorTemp,
             double minimumSupplyTemp,
             boolean coolingStalled) {
         if (!areTemperaturesValid(supplyTemp, outsideTemp, extractTemp)
+            || startIndoorTemp < stopIndoorTemp
             || supplyTemp <= minimumSupplyTemp) {
             return 0;
         }
 
         double outsideAdvantage = extractTemp - outsideTemp;
         double supplyAdvantage = extractTemp - supplyTemp;
-        boolean shouldStart = extractTemp >= targetIndoorTemp + START_TEMPERATURE_DEADBAND_C
+        boolean shouldStart = extractTemp >= startIndoorTemp
                 && outsideAdvantage >= START_OUTSIDE_ADVANTAGE_C
                 && supplyAdvantage >= START_SUPPLY_ADVANTAGE_C;
         boolean shouldContinue = currentCoolingSpeed > 0
-                && extractTemp > targetIndoorTemp
+            && extractTemp > stopIndoorTemp
                 && outsideAdvantage > CONTINUE_OUTSIDE_ADVANTAGE_C
                 && supplyAdvantage > CONTINUE_SUPPLY_ADVANTAGE_C;
 
@@ -41,11 +42,11 @@ final class EveningCoolingPolicy {
 
         double highSpeedDelta = currentCoolingSpeed == 3
             ? CONTINUE_HIGH_SPEED_DELTA_C : IMMEDIATE_HIGH_SPEED_DELTA_C;
-        double highSpeedOverTarget = currentCoolingSpeed == 3
-            ? CONTINUE_HIGH_SPEED_OVER_TARGET_C : IMMEDIATE_HIGH_SPEED_OVER_TARGET_C;
+        double highSpeedOverStart = currentCoolingSpeed == 3
+            ? CONTINUE_HIGH_SPEED_OVER_START_C : IMMEDIATE_HIGH_SPEED_OVER_START_C;
         if (coolingStalled
             || outsideAdvantage >= highSpeedDelta
-            || extractTemp >= targetIndoorTemp + highSpeedOverTarget) {
+            || extractTemp >= startIndoorTemp + highSpeedOverStart) {
             return 3;
         }
         return 2;
