@@ -72,8 +72,8 @@ A dedicated background service (`HumidityMonitor`) is available to automate fan 
 ### Features
 1.  **Data Logging**: Polls humidity, all four air temperatures, fan RPM, and fan speed every 30 seconds and stores them in a SQLite database.
 2.  **Boost Mode**: Automatically detects rapid humidity rises (e.g., during a shower) and boosts fan speed to Level 3 for 15 minutes.
-3.  **Night Mode**: Forces fan speed to Level 1 (Low) between 23:00 and 06:30 for quiet operation.
-4.  **Evening Cooling**: After sunset, uses cooler outside/supply air at speed 2 and escalates to speed 3 if indoor temperature does not improve.
+3.  **Night Mode**: Uses fan speed 1 between 22:00 and 06:30 when active cooling is not needed.
+4.  **Evening Cooling**: After sunset, uses cooler outside/supply air at speed 2, including overnight, and escalates to speed 3 only if indoor temperature does not improve.
 5.  **General Control**:
     *   **> 60% Humidity**: Speed 3 (High)
     *   **< 30% Humidity**: Speed 1 (Low)

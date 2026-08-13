@@ -2,12 +2,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.LocalTime;
 import org.junit.jupiter.api.Test;
 
 class EveningCoolingPolicyTest {
     @Test
     void startsAtSpeedTwoForObservedEveningTemperatures() {
         assertEquals(2, EveningCoolingPolicy.selectSpeed(0, 19.1, 20.0, 24.0, 22.0, 22.5, 15.0, false));
+    }
+
+    @Test
+    void startsAtSpeedTwoForDashboardTemperatures() {
+        assertEquals(2, EveningCoolingPolicy.selectSpeed(0, 23.1, 16.7, 23.7, 22.0, 22.5, 15.0, false));
     }
 
     @Test
@@ -39,8 +45,13 @@ class EveningCoolingPolicyTest {
     }
 
     @Test
-    void keepsSpeedThreeNearImmediateThresholds() {
+    void keepsSpeedThreeLatchedUntilCoolingStops() {
         assertEquals(3, EveningCoolingPolicy.selectSpeed(3, 19.0, 18.6, 24.2, 22.0, 22.5, 15.0, false));
+    }
+
+    @Test
+    void largeTemperatureDifferenceStillStartsAtSpeedTwo() {
+        assertEquals(2, EveningCoolingPolicy.selectSpeed(0, 19.0, 16.0, 24.2, 22.0, 22.5, 15.0, false));
     }
 
     @Test
@@ -54,5 +65,14 @@ class EveningCoolingPolicyTest {
     @Test
     void rejectsAnInvertedTriggerRange() {
         assertEquals(0, EveningCoolingPolicy.selectSpeed(0, 19.0, 20.0, 24.0, 24.0, 23.0, 15.0, false));
+    }
+
+    @Test
+    void fallbackCoolingWindowContinuesAfterMidnight() {
+        LocalTime start = LocalTime.of(18, 0);
+        LocalTime end = LocalTime.of(6, 30);
+
+        assertTrue(HumidityMonitor.isCoolingFallbackWindow(LocalTime.of(0, 10), start, end));
+        assertFalse(HumidityMonitor.isCoolingFallbackWindow(LocalTime.NOON, start, end));
     }
 }

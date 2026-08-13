@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.48
+
+- Made useful warm-night cooling override quiet night speed: the reported 23.7°C indoor, 16.7°C outside, and 23.1°C supply conditions now start at speed 2, including after midnight.
+- Reserve speed 3 for insufficient cooling progress, preserve acknowledged fan speed in the dashboard immediately, and return to speed 1 when cooling is no longer useful.
+
 ## 1.47
 
 - Fixed dashboard fan controls after the per-poll connection change by giving commands fresh serialized sessions, returning validation/device errors, and recording control state only after acknowledgement.

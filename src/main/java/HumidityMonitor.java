@@ -440,12 +440,10 @@ public class HumidityMonitor {
                 log("STATUS: Unit appears to be in DEFROST/ANTI-ICE mode (Supply Off, Extract On, Low Temp).");
             }
 
+            currentFanSpeed = estimateFanSpeed(supplyRpm, supplyDuty);
+
             // Apply Fan Speed Control
             updateFanSpeed(humidity, tempSupply, tempOutside, tempExtract, supplyRpm, supplyDuty, isDefrosting);
-
-            // Determine active/estimated speed dynamically (ensures actual state is reflected at startup, 
-            // under Monitor-Only mode, or when overridden physically outside the script)
-            currentFanSpeed = estimateFanSpeed(supplyRpm, supplyDuty);
 
             lastHumidity = humidity;
             lastHumidityTime = System.currentTimeMillis();
@@ -573,11 +571,7 @@ public class HumidityMonitor {
             LocalTime now = LocalTime.now();
             boolean isNightTime = isNight(now);
 
-            if (isNightTime) {
-                resetEveningCooling();
-                targetSpeed = 1; // Night Mode (Lowest speed)
-                reason = "Night Mode";
-            } else if (humidity >= HUMIDITY_VERY_HIGH_THRESHOLD) {
+            if (!isNightTime && humidity >= HUMIDITY_VERY_HIGH_THRESHOLD) {
                 resetEveningCooling();
                 targetSpeed = Math.max(3, NORMAL_SPEED);
                 reason = "Humidity Very High";
@@ -586,6 +580,9 @@ public class HumidityMonitor {
                 if (coolingSpeed > 0) {
                     targetSpeed = coolingSpeed;
                     reason = "Evening Cooling";
+                } else if (isNightTime) {
+                    targetSpeed = 1;
+                    reason = "Night Mode";
                 } else {
                     targetSpeed = selectHumiditySpeed(humidity, HUMIDITY_LOW_THRESHOLD,
                             HUMIDITY_HIGH_THRESHOLD, NORMAL_SPEED);
@@ -637,7 +634,7 @@ public class HumidityMonitor {
     }
 
     private int selectEveningCoolingSpeed(double tempSupply, double tempOutside, double tempExtract, LocalTime now) {
-        if (!EVENING_COOLING_ENABLED || isNight(now) || !isAfterSunset(now)) {
+        if (!EVENING_COOLING_ENABLED || !isAfterSunset(now)) {
             resetEveningCooling();
             return 0;
         }
@@ -700,21 +697,21 @@ public class HumidityMonitor {
                     String response = new String(conn.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
                     lastSunBelowHorizon = response.matches("(?s).*\\\"state\\\"\\s*:\\s*\\\"below_horizon\\\".*");
                     sunStateAvailable = true;
-                    return lastSunBelowHorizon && isEvening(now);
+                    return lastSunBelowHorizon;
                 }
             } catch (Exception e) {
                 logError("Failed to read Home Assistant sun state; using configured cooling window: " + e.getMessage());
             }
             sunStateAvailable = false;
         } else if (token != null && sunStateAvailable) {
-            return lastSunBelowHorizon && isEvening(now);
+            return lastSunBelowHorizon;
         }
 
-        return isTimeInRange(now, COOLING_FALLBACK_START, NIGHT_START);
+        return isCoolingFallbackWindow(now, COOLING_FALLBACK_START, NIGHT_END);
     }
 
-    private boolean isEvening(LocalTime time) {
-        return isTimeInRange(time, LocalTime.NOON, NIGHT_START);
+    static boolean isCoolingFallbackWindow(LocalTime time, LocalTime start, LocalTime end) {
+        return isTimeInRange(time, start, end);
     }
 
     static double rawTemperature(int rawValue, int offsetRaw) {
@@ -785,7 +782,7 @@ public class HumidityMonitor {
         return isTimeInRange(time, NIGHT_START, NIGHT_END);
     }
 
-    private boolean isTimeInRange(LocalTime time, LocalTime start, LocalTime end) {
+    private static boolean isTimeInRange(LocalTime time, LocalTime start, LocalTime end) {
         if (start.isBefore(end)) {
             return !time.isBefore(start) && !time.isAfter(end);
         } else {

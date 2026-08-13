@@ -53,6 +53,8 @@ Before starting, configure the add-on in the **Configuration** tab:
 - `cooling_fallback_start`: Cooling start when Home Assistant sunset state is unavailable (default: 18:00).
 - `cooling_escalation_minutes`: Minutes without meaningful delta improvement before speed 3 (default: 30).
 
+When indoor air remains warm and outside/supply air can cool it, evening cooling overrides quiet night speed. It starts at speed 2, may escalate to speed 3 after the configured progress interval, and returns to speed 1 when cooling is no longer useful.
+
 ## Database
 
 This add-on uses an internal SQLite database to store history. No external database configuration is required.

@@ -1,12 +1,8 @@
 final class EveningCoolingPolicy {
     private static final double START_OUTSIDE_ADVANTAGE_C = 2.0;
     private static final double CONTINUE_OUTSIDE_ADVANTAGE_C = 1.0;
-    private static final double START_SUPPLY_ADVANTAGE_C = 1.0;
+    private static final double START_SUPPLY_ADVANTAGE_C = 0.5;
     private static final double CONTINUE_SUPPLY_ADVANTAGE_C = 0.5;
-    private static final double IMMEDIATE_HIGH_SPEED_DELTA_C = 6.0;
-    private static final double CONTINUE_HIGH_SPEED_DELTA_C = 5.5;
-    private static final double IMMEDIATE_HIGH_SPEED_OVER_START_C = 2.5;
-    private static final double CONTINUE_HIGH_SPEED_OVER_START_C = 2.0;
 
     private EveningCoolingPolicy() {
     }
@@ -40,13 +36,7 @@ final class EveningCoolingPolicy {
             return 0;
         }
 
-        double highSpeedDelta = currentCoolingSpeed == 3
-            ? CONTINUE_HIGH_SPEED_DELTA_C : IMMEDIATE_HIGH_SPEED_DELTA_C;
-        double highSpeedOverStart = currentCoolingSpeed == 3
-            ? CONTINUE_HIGH_SPEED_OVER_START_C : IMMEDIATE_HIGH_SPEED_OVER_START_C;
-        if (coolingStalled
-            || outsideAdvantage >= highSpeedDelta
-            || extractTemp >= startIndoorTemp + highSpeedOverStart) {
+        if (coolingStalled || currentCoolingSpeed == 3) {
             return 3;
         }
         return 2;
