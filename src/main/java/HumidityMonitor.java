@@ -1,7 +1,5 @@
 import java.io.IOException;
 import java.io.OutputStream;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -13,6 +11,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -39,7 +38,7 @@ public class HumidityMonitor {
 
     // Configuration
     private static final int POLL_INTERVAL = Integer.parseInt(System.getenv().getOrDefault("POLL_INTERVAL", "30"));
-    private volatile boolean monitorOnly = Boolean.parseBoolean(System.getenv().getOrDefault("MONITOR_ONLY", "true"));
+    private volatile boolean monitorOnly = Boolean.parseBoolean(System.getenv().getOrDefault("MONITOR_ONLY", "false"));
 
     // Boost Configuration
     private static final boolean BOOST_ENABLED = Boolean.parseBoolean(System.getenv().getOrDefault("BOOST_ENABLED", "true"));
@@ -55,10 +54,22 @@ public class HumidityMonitor {
     private static final LocalTime NIGHT_START = LocalTime.parse(System.getenv().getOrDefault("NIGHT_START", "23:00"));
     private static final LocalTime NIGHT_END = LocalTime.parse(System.getenv().getOrDefault("NIGHT_END", "06:30"));
 
+    // Evening Cooling Configuration
+    private static final boolean EVENING_COOLING_ENABLED = Boolean.parseBoolean(System.getenv().getOrDefault("EVENING_COOLING_ENABLED", "true"));
+    private static final double COOLING_TARGET_TEMP = Double.parseDouble(System.getenv().getOrDefault("COOLING_TARGET_TEMP", "22.0"));
+    private static final double COOLING_MIN_SUPPLY_TEMP = Double.parseDouble(System.getenv().getOrDefault("COOLING_MIN_SUPPLY_TEMP", "15.0"));
+    private static final LocalTime COOLING_FALLBACK_START = LocalTime.parse(System.getenv().getOrDefault("COOLING_FALLBACK_START", "18:00"));
+    private static final long COOLING_ESCALATION_MS = Integer.parseInt(System.getenv().getOrDefault("COOLING_ESCALATION_MINUTES", "30")) * 60 * 1000L;
+    private static final double COOLING_PROGRESS_C = 0.3;
+    private static final long SUN_STATE_CACHE_MS = 5 * 60 * 1000L;
+
     // State
     private int lastHumidity = -1;
     private long lastHumidityTime = 0;
-    private double lastTemp = -1.0;
+    private double lastSupplyTemp = -1.0;
+    private double lastOutsideTemp = -1.0;
+    private double lastExhaustTemp = -1.0;
+    private double lastExtractTemp = -1.0;
     private int lastRpm = -1;
     private boolean boostActive = false;
     private long boostEndTime = 0;
@@ -73,6 +84,13 @@ public class HumidityMonitor {
     // Static RPM Mode
     private volatile boolean staticRpmMode = false;
     private volatile int staticRpmSpeed = 2;
+    private boolean eveningCoolingActive = false;
+    private int eveningCoolingSpeed = 0;
+    private double coolingBaselineIndoorTemp = Double.NaN;
+    private long coolingBaselineTime = 0;
+    private long lastSunStateCheck = 0;
+    private boolean lastSunBelowHorizon = false;
+    private boolean sunStateAvailable = false;
 
     public HumidityMonitor(String ip, String email) {
         this.client = new GenvexClient(ip, email);
@@ -137,6 +155,10 @@ public class HumidityMonitor {
         try (OutputStream os = t.getResponseBody()) { os.write(bytes); }
     }
 
+    private static String jsonTemperature(double temperature) {
+        return Double.isFinite(temperature) ? String.format(Locale.ROOT, "%.1f", temperature) : "null";
+    }
+
     private static void sendError(HttpExchange t, int code, String message) throws IOException {
         String json = "{\"error\": \"" + message + "\"}";
         byte[] bytes = json.getBytes("UTF-8");
@@ -169,9 +191,12 @@ public class HumidityMonitor {
             long boostSecsLeft = Math.max(0, (boostEndTime - now) / 1000);
             boolean isManualOverrideCurrentlyActive = manualOverrideActive && (now < manualOverrideEndTime);
 
-            String json = String.format(
-                "{\"humidity\":%d, \"temp\":%.1f, \"rpm\":%d, \"fan_speed\":%d, \"commanded_speed\":%d, \"boost\":%b, \"static_mode\":%b, \"static_speed\":%d, \"monitor_only\":%b, \"manual_override_active\":%b, \"manual_override_secs_left\":%d, \"boost_secs_left\":%d}",
-                lastHumidity, lastTemp, lastRpm, effectiveSpeed, currentFanSpeed, boostActive, staticRpmMode, staticRpmSpeed, monitorOnly, isManualOverrideCurrentlyActive, manualOverrideSecsLeft, boostSecsLeft
+            String json = String.format(Locale.ROOT,
+                "{\"humidity\":%d, \"temp\":%s, \"temp_supply\":%s, \"temp_outside\":%s, \"temp_exhaust\":%s, \"temp_extract\":%s, \"rpm\":%d, \"fan_speed\":%d, \"commanded_speed\":%d, \"boost\":%b, \"evening_cooling\":%b, \"evening_cooling_speed\":%d, \"static_mode\":%b, \"static_speed\":%d, \"monitor_only\":%b, \"manual_override_active\":%b, \"manual_override_secs_left\":%d, \"boost_secs_left\":%d}",
+                lastHumidity, jsonTemperature(lastSupplyTemp), jsonTemperature(lastSupplyTemp),
+                jsonTemperature(lastOutsideTemp), jsonTemperature(lastExhaustTemp), jsonTemperature(lastExtractTemp),
+                lastRpm, effectiveSpeed, currentFanSpeed, boostActive, eveningCoolingActive, eveningCoolingSpeed,
+                staticRpmMode, staticRpmSpeed, monitorOnly, isManualOverrideCurrentlyActive, manualOverrideSecsLeft, boostSecsLeft
             );
             sendJson(t, json);
         }
@@ -282,7 +307,7 @@ public class HumidityMonitor {
                         double temp = rs.getDouble("temp_supply");
                         int rpm = rs.getInt("fan_rpm");
 
-                        json.append(String.format(
+                        json.append(String.format(Locale.ROOT,
                             "{\"timestamp\":\"%s\", \"humidity\":%d, \"temp\":%.1f, \"rpm\":%d}",
                             ts, humidity, temp, rpm
                         ));
@@ -311,19 +336,29 @@ public class HumidityMonitor {
 
             int humidity = client.readDatapoint(26);
             int tempSupplyRaw = client.readDatapoint(20);
+            int tempOutsideRaw = client.readDatapoint(21);
+            int tempExhaustRaw = client.readDatapoint(22);
+            int tempExtractRaw = client.readDatapoint(23);
             int supplyRpm = client.readDatapoint(35);
             int supplyDuty = client.readDatapoint(18);
             int extractRpm = client.readDatapoint(36);
 
-            log("Polled Data: Humidity=" + humidity + "%, TempRaw=" + tempSupplyRaw + 
+            log("Polled Data: Humidity=" + humidity + "%, SupplyTempRaw=" + tempSupplyRaw
+                + ", OutsideTempRaw=" + tempOutsideRaw + ", ExhaustTempRaw=" + tempExhaustRaw
+                + ", ExtractTempRaw=" + tempExtractRaw +
                 ", SupplyRPM=" + supplyRpm + ", SupplyDuty=" + supplyDuty + ", ExtractRPM=" + extractRpm);
 
             if (humidity == -1 || tempSupplyRaw == -1 || supplyRpm == -1) {
                 throw new IOException("Failed to read datapoints (returned -1)");
             }
 
+            checkBoostLogic(humidity);
+
             int tempSupplyOffsetRaw = Integer.parseInt(System.getenv().getOrDefault("TEMP_SUPPLY_OFFSET_RAW", "-300"));
             double tempSupply = (tempSupplyRaw + tempSupplyOffsetRaw) / 10.0;
+            double tempOutside = rawTemperature(tempOutsideRaw);
+            double tempExhaust = rawTemperature(tempExhaustRaw);
+            double tempExtract = rawTemperature(tempExtractRaw);
 
             // Defrost Detection
             boolean isDefrosting = false;
@@ -333,7 +368,7 @@ public class HumidityMonitor {
             }
 
             // Apply Fan Speed Control
-            updateFanSpeed(humidity, supplyRpm, supplyDuty, isDefrosting);
+            updateFanSpeed(humidity, tempSupply, tempOutside, tempExtract, supplyRpm, supplyDuty, isDefrosting);
 
             // Determine active/estimated speed dynamically (ensures actual state is reflected at startup, 
             // under Monitor-Only mode, or when overridden physically outside the script)
@@ -341,7 +376,10 @@ public class HumidityMonitor {
 
             lastHumidity = humidity;
             lastHumidityTime = System.currentTimeMillis();
-            lastTemp = tempSupply;
+            lastSupplyTemp = tempSupply;
+            lastOutsideTemp = tempOutside;
+            lastExhaustTemp = tempExhaust;
+            lastExtractTemp = tempExtract;
             lastRpm = supplyRpm;
 
             if (saveToDatabase(humidity, tempSupply, supplyRpm)) {
@@ -353,7 +391,7 @@ public class HumidityMonitor {
             }
             
             // Update Home Assistant
-            updateHomeAssistant(humidity, tempSupply, supplyRpm, currentFanSpeed);
+            updateHomeAssistant(humidity, tempSupply, tempOutside, tempExhaust, tempExtract, supplyRpm, currentFanSpeed);
 
         } catch (Exception e) {
             logError("Error polling data: " + e.getMessage());
@@ -363,20 +401,32 @@ public class HumidityMonitor {
         }
     }
 
-    private void updateHomeAssistant(int humidity, double temp, int rpm, int speed) {
+    private void updateHomeAssistant(int humidity, double tempSupply, double tempOutside, double tempExhaust,
+            double tempExtract, int rpm, int speed) {
         String token = System.getenv("SUPERVISOR_TOKEN");
         if (token == null) return;
 
         sendToHA("sensor.genvex_humidity", String.valueOf(humidity), "%", "humidity", token);
-        sendToHA("sensor.genvex_temp_supply", String.format("%.1f", temp), "°C", "temperature", token);
+        sendToHA("sensor.genvex_temp_supply", String.format(Locale.ROOT, "%.1f", tempSupply), "°C", "temperature", token);
+        sendTemperatureToHA("sensor.genvex_temp_outside", tempOutside, token);
+        sendTemperatureToHA("sensor.genvex_temp_exhaust", tempExhaust, token);
+        sendTemperatureToHA("sensor.genvex_temp_extract", tempExtract, token);
         sendToHA("sensor.genvex_fan_rpm", String.valueOf(rpm), "rpm", null, token);
         sendToHA("sensor.genvex_fan_speed", String.valueOf(speed), null, null, token);
+    }
+
+    private void sendTemperatureToHA(String entityId, double temperature, String token) {
+        if (Double.isFinite(temperature)) {
+            sendToHA(entityId, String.format(Locale.ROOT, "%.1f", temperature), "°C", "temperature", token);
+        }
     }
 
     private void sendToHA(String entityId, String state, String unit, String deviceClass, String token) {
         try {
             URL url = new URL("http://supervisor/core/api/states/" + entityId);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(3000);
+            conn.setReadTimeout(3000);
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Authorization", "Bearer " + token);
             conn.setRequestProperty("Content-Type", "application/json");
@@ -409,8 +459,10 @@ public class HumidityMonitor {
         }
     }
 
-    private void updateFanSpeed(int humidity, int currentRpm, int supplyDuty, boolean isDefrosting) {
+    private void updateFanSpeed(int humidity, double tempSupply, double tempOutside, double tempExtract,
+            int currentRpm, int supplyDuty, boolean isDefrosting) {
         if (monitorOnly) {
+            resetEveningCooling();
             log("Monitor mode active. Recommended speed: " + NORMAL_SPEED + " (Reason: Monitor Only)");
             return;
         }
@@ -420,12 +472,15 @@ public class HumidityMonitor {
 
         // Manual override takes precedence over everything
         if (manualOverrideActive && System.currentTimeMillis() < manualOverrideEndTime) {
+            resetEveningCooling();
             targetSpeed = manualOverrideSpeed;
             reason = "Manual Override";
         } else if (staticRpmMode) {
+            resetEveningCooling();
             targetSpeed = staticRpmSpeed;
             reason = "Static RPM Mode";
-                } else if (boostActive) {
+        } else if (boostActive) {
+            resetEveningCooling();
             targetSpeed = BOOST_SPEED;
             reason = "Boost";
         } else {
@@ -433,13 +488,18 @@ public class HumidityMonitor {
             boolean isNightTime = isNight(now);
 
             if (isNightTime) {
+                resetEveningCooling();
                 targetSpeed = 1; // Night Mode (Lowest speed)
                 reason = "Night Mode";
+            } else if (humidity >= HUMIDITY_VERY_HIGH_THRESHOLD) {
+                resetEveningCooling();
+                targetSpeed = 3;
+                reason = "Humidity Very High";
             } else {
-                // General Humidity Control
-                if (humidity >= HUMIDITY_VERY_HIGH_THRESHOLD) {
-                    targetSpeed = 3;
-                    reason = "Humidity Very High";
+                int coolingSpeed = selectEveningCoolingSpeed(tempSupply, tempOutside, tempExtract, now);
+                if (coolingSpeed > 0) {
+                    targetSpeed = coolingSpeed;
+                    reason = "Evening Cooling";
                 } else if (humidity >= HUMIDITY_HIGH_THRESHOLD) {
                     targetSpeed = 2;
                     reason = "Humidity High";
@@ -479,6 +539,91 @@ public class HumidityMonitor {
                 }
             }
         }
+    }
+
+    private int selectEveningCoolingSpeed(double tempSupply, double tempOutside, double tempExtract, LocalTime now) {
+        if (!EVENING_COOLING_ENABLED || isNight(now) || !isAfterSunset(now)) {
+            resetEveningCooling();
+            return 0;
+        }
+
+        long currentTime = System.currentTimeMillis();
+        boolean stalled = eveningCoolingActive && EveningCoolingPolicy.hasStalled(
+            coolingBaselineIndoorTemp, tempExtract, currentTime - coolingBaselineTime,
+            COOLING_ESCALATION_MS, COOLING_PROGRESS_C);
+        int selectedSpeed = EveningCoolingPolicy.selectSpeed(
+            eveningCoolingSpeed, tempSupply, tempOutside, tempExtract,
+                COOLING_TARGET_TEMP, COOLING_MIN_SUPPLY_TEMP, stalled);
+
+        if (selectedSpeed == 0) {
+            if (eveningCoolingActive) {
+                log(String.format(Locale.ROOT, "Evening cooling complete: indoor %.1fC, outside %.1fC, supply %.1fC.",
+                        tempExtract, tempOutside, tempSupply));
+            }
+            resetEveningCooling();
+            return 0;
+        }
+
+        if (!eveningCoolingActive) {
+            coolingBaselineIndoorTemp = tempExtract;
+            coolingBaselineTime = currentTime;
+            log(String.format(Locale.ROOT, "Evening cooling started at speed %d: indoor %.1fC, outside %.1fC, supply %.1fC.",
+                    selectedSpeed, tempExtract, tempOutside, tempSupply));
+        } else if (tempExtract <= coolingBaselineIndoorTemp - COOLING_PROGRESS_C) {
+            coolingBaselineIndoorTemp = tempExtract;
+            coolingBaselineTime = currentTime;
+        }
+        if (selectedSpeed > eveningCoolingSpeed && eveningCoolingActive) {
+            log(String.format(Locale.ROOT, "Evening cooling escalated to speed %d after insufficient indoor temperature improvement (%.1fC).",
+                    selectedSpeed, tempExtract));
+        }
+
+        eveningCoolingActive = true;
+        eveningCoolingSpeed = selectedSpeed;
+        return selectedSpeed;
+    }
+
+    private void resetEveningCooling() {
+        eveningCoolingActive = false;
+        eveningCoolingSpeed = 0;
+        coolingBaselineIndoorTemp = Double.NaN;
+        coolingBaselineTime = 0;
+    }
+
+    private boolean isAfterSunset(LocalTime now) {
+        String token = System.getenv("SUPERVISOR_TOKEN");
+        long currentTime = System.currentTimeMillis();
+        if (token != null && currentTime - lastSunStateCheck >= SUN_STATE_CACHE_MS) {
+            lastSunStateCheck = currentTime;
+            try {
+                URL url = new URL("http://supervisor/core/api/states/sun.sun");
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setConnectTimeout(3000);
+                conn.setReadTimeout(3000);
+                conn.setRequestProperty("Authorization", "Bearer " + token);
+                if (conn.getResponseCode() < 400) {
+                    String response = new String(conn.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                    lastSunBelowHorizon = response.matches("(?s).*\\\"state\\\"\\s*:\\s*\\\"below_horizon\\\".*");
+                    sunStateAvailable = true;
+                    return lastSunBelowHorizon && isEvening(now);
+                }
+            } catch (Exception e) {
+                logError("Failed to read Home Assistant sun state; using configured cooling window: " + e.getMessage());
+            }
+            sunStateAvailable = false;
+        } else if (token != null && sunStateAvailable) {
+            return lastSunBelowHorizon && isEvening(now);
+        }
+
+        return isTimeInRange(now, COOLING_FALLBACK_START, NIGHT_START);
+    }
+
+    private boolean isEvening(LocalTime time) {
+        return isTimeInRange(time, LocalTime.NOON, NIGHT_START);
+    }
+
+    private double rawTemperature(int rawValue) {
+        return rawValue == -1 ? Double.NaN : rawValue / 10.0;
     }
     
     class RestartApiHandler implements HttpHandler {
@@ -536,15 +681,19 @@ public class HumidityMonitor {
     }
 
     private boolean isNight(LocalTime time) {
-        if (NIGHT_START.isBefore(NIGHT_END)) {
-            return !time.isBefore(NIGHT_START) && !time.isAfter(NIGHT_END);
+        return isTimeInRange(time, NIGHT_START, NIGHT_END);
+    }
+
+    private boolean isTimeInRange(LocalTime time, LocalTime start, LocalTime end) {
+        if (start.isBefore(end)) {
+            return !time.isBefore(start) && !time.isAfter(end);
         } else {
-            return !time.isBefore(NIGHT_START) || !time.isAfter(NIGHT_END);
+            return !time.isBefore(start) || !time.isAfter(end);
         }
     }
 
     private void checkBoostLogic(int currentHumidity) {
-        if (staticRpmMode) return; // Skip boost logic if static mode is active
+        if (!BOOST_ENABLED || staticRpmMode) return;
         if (lastHumidity == -1) return; // First run, can't calculate delta
 
         long now = System.currentTimeMillis();
@@ -560,11 +709,10 @@ public class HumidityMonitor {
                 return;
             }
 
-            // Check for rapid rise or high humidity
+            // Absolute humidity levels are handled by updateFanSpeed; boost is reserved for rapid rises.
             boolean rapidRise = (currentHumidity - lastHumidity) >= HUMIDITY_RISE_THRESHOLD;
-            boolean highHumidity = currentHumidity >= HUMIDITY_HIGH_THRESHOLD;
             
-            if (rapidRise || highHumidity) {
+            if (rapidRise) {
                 LocalTime timeNow = LocalTime.now();
                 boolean isNightTime = isNight(timeNow);
 
@@ -573,11 +721,7 @@ public class HumidityMonitor {
                         log("Rapid humidity rise detected, but Boost is disabled at night.");
                     }
                 } else {
-                    if (rapidRise) {
-                        log("Rapid humidity rise detected (" + lastHumidity + "% -> " + currentHumidity + "%). Activating Boost.");
-                    } else {
-                        log("High humidity detected (" + currentHumidity + "% >= " + HUMIDITY_HIGH_THRESHOLD + "%). Activating Boost.");
-                    }
+                    log("Rapid humidity rise detected (" + lastHumidity + "% -> " + currentHumidity + "%). Activating Boost.");
                     activateBoost(currentHumidity);
                 }
             }

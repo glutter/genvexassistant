@@ -13,7 +13,7 @@ export PATH="$HOME/.jdk/jdk-17.0.18/jdk-17.0.18+8/Contents/Home/bin:$HOME/.maven
 
 # 1. Compile and build the shadow/fat JAR
 echo "Building project with Maven..."
-mvn clean package -DskipTests
+mvn clean package
 
 # 2. Extract version from ha_addon/config.json
 if ! command -v jq &> /dev/null; then
@@ -30,7 +30,9 @@ cp "target/genvex-integration-${VERSION}.jar" ha_addon/app.jar
 
 # 4. Git operations
 echo "Staging files for commit..."
-git add ha_addon/app.jar ha_addon/config.json pom.xml src/
+git add README.md publish.sh pom.xml src/ \
+    ha_addon/app.jar ha_addon/config.json ha_addon/run.sh \
+    ha_addon/README.md ha_addon/CHANGELOG.md
 
 # Prompt user to confirm and commit
 echo "Checking git status..."

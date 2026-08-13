@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.41
+
+- Added sunset-aware evening cooling using supply, outside, and extract/indoor temperatures. Cooling runs until quiet night mode, starts at speed 2, latches at speed 3 after insufficient progress, and stops with temperature deadbands as indoor/outdoor conditions converge.
+- Added outside, exhaust, and extract/indoor temperatures to the live dashboard and Home Assistant sensors.
+- Fixed rapid-rise humidity boost detection, which existed but was never called from the polling loop, and made `boost_enabled` effective without overriding steady high-humidity control.
+- Added a startup `monitor_only` add-on option, defaulting to automatic control so configured cooling and humidity rules remain active after restart. Runtime dashboard mode changes last until the add-on restarts.
+- Upgrading to 1.41 enables automatic control by default; set `monitor_only` to true before starting the add-on for passive telemetry only.
+- Added Home Assistant HTTP timeouts so an unavailable Core API cannot block the monitoring loop indefinitely.
+
 ## 1.40
 
 - **Fixed Fan Speed Display bug**: Derives fan speed dynamically from actual EC-motor duty cycle (register 18) and RPM. This fixes the `-1` Fan Speed display bug during startup or when running in passive monitoring mode.

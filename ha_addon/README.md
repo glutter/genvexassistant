@@ -39,12 +39,18 @@ Before starting, configure the add-on in the **Configuration** tab:
 - `humidity_rise_threshold`: Percentage rise in humidity to trigger boost (default: 2).
 - `boost_speed`: Fan speed level for boost (default: 3).
 - `normal_speed`: Fan speed level for normal operation (default: 2).
+- `monitor_only`: Disable automatic fan writes for passive monitoring (default: false).
 - `boost_duration_minutes`: How long boost stays active (default: 15).
 - `humidity_high_threshold`: Humidity level to trigger high speed (default: 60).
 - `humidity_low_threshold`: Humidity level to trigger low speed (default: 30).
 - `night_start`: Start time for night mode (HH:mm, default: 23:00).
 - `night_end`: End time for night mode (HH:mm, default: 06:30).
 - `temp_supply_offset_raw`: Calibration offset for supply temperature (raw value, default: -300).
+- `evening_cooling_enabled`: Enables cooling with cooler outside air after sunset (default: true).
+- `cooling_target_temp`: Indoor/extract temperature target in °C (default: 22.0).
+- `cooling_min_supply_temp`: Minimum supply temperature allowed for cooling in °C (default: 15.0).
+- `cooling_fallback_start`: Cooling start when Home Assistant sunset state is unavailable (default: 18:00).
+- `cooling_escalation_minutes`: Minutes without meaningful delta improvement before speed 3 (default: 30).
 
 ## Database
 
@@ -82,6 +88,9 @@ If you have updated the files in `/addons/local/genvex_monitor` but do not see a
 The add-on exports sensors to Home Assistant. You can use the standard **History Graph** card with these entities:
 - `sensor.genvex_humidity`
 - `sensor.genvex_temp_supply`
+- `sensor.genvex_temp_outside`
+- `sensor.genvex_temp_exhaust`
+- `sensor.genvex_temp_extract`
 - `sensor.genvex_fan_rpm`
 - `sensor.genvex_fan_speed`
 

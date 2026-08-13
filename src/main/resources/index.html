@@ -109,6 +109,21 @@
                 <div class="data-label">Supply Temp</div>
             </div>
             <div class="data-point">
+                <div class="data-icon"><i class="fas fa-house"></i></div>
+                <div class="data-value" id="live-temp-extract">--°C</div>
+                <div class="data-label">Indoor / Extract</div>
+            </div>
+            <div class="data-point">
+                <div class="data-icon"><i class="fas fa-cloud-sun"></i></div>
+                <div class="data-value" id="live-temp-outside">--°C</div>
+                <div class="data-label">Outside Temp</div>
+            </div>
+            <div class="data-point">
+                <div class="data-icon"><i class="fas fa-arrow-up-from-bracket"></i></div>
+                <div class="data-value" id="live-temp-exhaust">--°C</div>
+                <div class="data-label">Exhaust Temp</div>
+            </div>
+            <div class="data-point">
                 <div class="data-icon"><i class="fas fa-fan"></i></div>
                 <div class="data-value" id="live-rpm">--</div>
                 <div class="data-label">Fan RPM</div>
@@ -235,7 +250,10 @@
 
         function updateLiveDisplay(data) {
             document.getElementById('live-humidity').textContent = data.humidity + '%';
-            document.getElementById('live-temp').textContent = data.temp.toFixed(1) + '°C';
+            document.getElementById('live-temp').textContent = data.temp_supply.toFixed(1) + '°C';
+            document.getElementById('live-temp-extract').textContent = formatTemperature(data.temp_extract);
+            document.getElementById('live-temp-outside').textContent = formatTemperature(data.temp_outside);
+            document.getElementById('live-temp-exhaust').textContent = formatTemperature(data.temp_exhaust);
             document.getElementById('live-rpm').textContent = data.rpm;
             document.getElementById('live-speed').textContent = data.fan_speed;
 
@@ -251,6 +269,11 @@
                 banner.style.borderColor = 'var(--success-color)';
                 banner.style.background = 'rgba(3, 218, 198, 0.15)';
                 banner.innerHTML = `<i class="fas fa-shower"></i> &nbsp; <strong>Shower Rapid Humidity Boost Active:</strong> Speed ${data.commanded_speed} for another ${Math.ceil(data.boost_secs_left / 60)}m`;
+            } else if (data.evening_cooling) {
+                banner.style.display = 'block';
+                banner.style.borderColor = 'var(--success-color)';
+                banner.style.background = 'rgba(3, 218, 198, 0.15)';
+                banner.innerHTML = `<i class="fas fa-moon"></i> &nbsp; <strong>Evening Cooling Active:</strong> Speed ${data.evening_cooling_speed}, indoor ${formatTemperature(data.temp_extract)} / outside ${formatTemperature(data.temp_outside)}`;
             } else {
                 banner.style.display = 'none';
             }
@@ -275,10 +298,14 @@
                 } else {
                     select.value = 'auto';
                     staticGroup.style.display = 'none';
-                    modeText.textContent = "🤖 AUTONOMOUS mode active: Speed automatically adjusts based on humidity rules & night schedule.";
+                    modeText.textContent = "🤖 AUTONOMOUS mode active: Speed adjusts for humidity, evening cooling, and night schedule.";
                     modeText.style.color = "#03dac6";
                 }
             }
+        }
+
+        function formatTemperature(value) {
+            return Number.isFinite(value) ? value.toFixed(1) + '°C' : '--°C';
         }
 
         function updateChart(data) {

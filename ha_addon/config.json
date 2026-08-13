@@ -1,6 +1,6 @@
 {
   "name": "Genvex Humidity Monitor",
-  "version": "1.40",
+  "version": "1.41",
   "slug": "genvex_monitor",
   "description": "Java-based Genvex Ventilation Control and Monitoring",
   "url": "https://github.com/lutherh/genvexassistant",
@@ -16,6 +16,7 @@
     "genvex_ip": "",
     "genvex_email": "",
     "poll_interval": 30,
+    "monitor_only": false,
     "boost_enabled": true,
     "humidity_rise_threshold": 4,
     "boost_speed": 3,
@@ -26,12 +27,18 @@
     "humidity_low_threshold": 30,
     "night_start": "22:00",
     "night_end": "06:30",
-    "temp_supply_offset_raw": -300
+    "temp_supply_offset_raw": -300,
+    "evening_cooling_enabled": true,
+    "cooling_target_temp": 22.0,
+    "cooling_min_supply_temp": 15.0,
+    "cooling_fallback_start": "18:00",
+    "cooling_escalation_minutes": 30
   },
   "schema": {
     "genvex_ip": "str",
     "genvex_email": "str",
     "poll_interval": "int",
+    "monitor_only": "bool",
     "boost_enabled": "bool",
     "humidity_rise_threshold": "int",
     "boost_speed": "int",
@@ -42,6 +49,11 @@
     "humidity_low_threshold": "int",
     "night_start": "str",
     "night_end": "str",
-    "temp_supply_offset_raw": "int"
+    "temp_supply_offset_raw": "int",
+    "evening_cooling_enabled": "bool",
+    "cooling_target_temp": "float",
+    "cooling_min_supply_temp": "float",
+    "cooling_fallback_start": "str",
+    "cooling_escalation_minutes": "int"
   }
 }
