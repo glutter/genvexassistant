@@ -27,6 +27,16 @@ public class GenvexClient {
     }
 
     public void connect() throws IOException, InterruptedException {
+        disconnect();
+        try {
+            connectFresh();
+        } catch (IOException | InterruptedException | RuntimeException e) {
+            disconnect();
+            throw e;
+        }
+    }
+
+    private void connectFresh() throws IOException, InterruptedException {
         socket = new DatagramSocket();
         socket.setSoTimeout(2500); // Optimized timeout (was 5000)
         address = InetAddress.getByName(ipAddress);
@@ -100,12 +110,11 @@ public class GenvexClient {
         byte[] cmd = buildSetpointWriteCommand(24, speed);
         byte[] response = sendPacketAndWaitForResponse(sequenceId++, cmd, 5);
         
-        if (response == null) {
-             System.err.println("GenvexClient: Failed to set fan speed (no response)");
-        } else {
-             // We could check response content if we knew the format, likely an echo or success code
-             System.out.println("GenvexClient: Set fan speed command sent, response received (len=" + response.length + ")");
+        if (response == null || response.length < 2) {
+              connected = false;
+            throw new IOException("Set fan speed failed: missing acknowledgement");
         }
+           System.out.println("GenvexClient: Set fan speed command sent, response received (len=" + response.length + ")");
     }
 
     // --- Private Helpers ---
@@ -146,14 +155,10 @@ public class GenvexClient {
                     responsePacket.setLength(receiveBuffer.length);
                     socket.receive(responsePacket);
                     byte[] responseData = Arrays.copyOf(responsePacket.getData(), responsePacket.getLength());
-                    
-                    if (responseData.length > 16 && responseData[8] == U_DATA) {
-                        byte payloadType = responseData[16];
-                        if (payloadType == U_CRYPT) {
-                            if (responseData.length >= 22) {
-                                return Arrays.copyOfRange(responseData, 22, responseData.length);
-                            }
-                        }
+
+                    if (isExpectedCryptResponse(responsePacket, responseData, address, PORT,
+                            clientId, serverId, seq)) {
+                        return Arrays.copyOfRange(responseData, 22, responseData.length - 2);
                     }
                 }
             } catch (SocketTimeoutException e) {
@@ -162,6 +167,34 @@ public class GenvexClient {
             Thread.sleep(500);
         }
         return null;
+    }
+
+    static boolean isExpectedCryptResponse(DatagramPacket packet, byte[] data, InetAddress expectedAddress,
+            int expectedPort, byte[] expectedClientId, byte[] expectedServerId, int expectedSequence) {
+        if (!expectedAddress.equals(packet.getAddress()) || packet.getPort() != expectedPort || data.length < 24) {
+            return false;
+        }
+        if (!Arrays.equals(expectedClientId, Arrays.copyOfRange(data, 0, 4))
+                || !Arrays.equals(expectedServerId, Arrays.copyOfRange(data, 4, 8))
+                || data[8] != U_DATA || data[16] != U_CRYPT
+                || data[20] != 0x00 || data[21] != 0x0a) {
+            return false;
+        }
+
+        int sequence = ((data[12] & 0xFF) << 8) | (data[13] & 0xFF);
+        int declaredLength = ((data[14] & 0xFF) << 8) | (data[15] & 0xFF);
+        int cryptLength = ((data[18] & 0xFF) << 8) | (data[19] & 0xFF);
+        if (sequence != (expectedSequence & 0xFFFF) || declaredLength != data.length
+                || cryptLength != data.length - 16) {
+            return false;
+        }
+
+        int checksum = 0;
+        for (int i = 0; i < data.length - 2; i++) {
+            checksum = (checksum + (data[i] & 0xFF)) & 0xFFFF;
+        }
+        int packetChecksum = ((data[data.length - 2] & 0xFF) << 8) | (data[data.length - 1] & 0xFF);
+        return checksum == packetChecksum;
     }
 
     private byte[] buildPacket(byte[] clientId, byte[] serverId, byte packetType, int sequenceId, byte[]... payloads) {

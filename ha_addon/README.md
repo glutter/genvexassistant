@@ -31,19 +31,19 @@ Before starting, configure the add-on in the **Configuration** tab:
 
 **Required Settings:**
 - `genvex_ip`: The IP address of your Genvex unit (e.g., `192.168.1.100`).
-- `genvex_email`: The email/password used for the Genvex connection.
+- `genvex_email`: The email address registered with the Genvex unit.
 
 **Optional Settings:**
 - `poll_interval`: How often to read data in seconds (default: 30).
 - `boost_enabled`: Enable/Disable automatic fan boost on humidity rise.
-- `humidity_rise_threshold`: Percentage rise in humidity to trigger boost (default: 2).
+- `humidity_rise_threshold`: Percentage rise in humidity to trigger boost (default: 4).
 - `boost_speed`: Fan speed level for boost (default: 3).
-- `normal_speed`: Fan speed level for normal operation (default: 2).
+- `normal_speed`: Fan speed level between the low and high humidity thresholds (default: 1).
 - `monitor_only`: Disable automatic fan writes for passive monitoring (default: false).
 - `boost_duration_minutes`: How long boost stays active (default: 15).
-- `humidity_high_threshold`: Humidity level to trigger high speed (default: 60).
-- `humidity_low_threshold`: Humidity level to trigger low speed (default: 30).
-- `night_start`: Start time for night mode (HH:mm, default: 23:00).
+- `humidity_high_threshold`: Humidity level to trigger high speed (default: 65).
+- `humidity_low_threshold`: Humidity level at or below which speed 1 is used (default: 30).
+- `night_start`: Start time for night mode (HH:mm, default: 22:00).
 - `night_end`: End time for night mode (HH:mm, default: 06:30).
 - `temp_supply_offset_raw`: Shared calibration offset for supply, outside, exhaust, and extract temperatures (legacy option name; raw value, default: -300).
 - `evening_cooling_enabled`: Enables cooling with cooler outside air after sunset (default: true).

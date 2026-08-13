@@ -33,6 +33,7 @@ public class HumidityMonitor {
     private static final int WEB_PORT = 8081; // Different from GenvexServer 8080
 
     private final GenvexClient client;
+    private final Object clientLock = new Object();
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
     private final String sessionId = java.util.UUID.randomUUID().toString().substring(0, 6);
 
@@ -42,16 +43,17 @@ public class HumidityMonitor {
 
     // Boost Configuration
     private static final boolean BOOST_ENABLED = Boolean.parseBoolean(System.getenv().getOrDefault("BOOST_ENABLED", "true"));
-    private static final int HUMIDITY_RISE_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_RISE_THRESHOLD", "3")); // % rise per poll
+    private static final int HUMIDITY_RISE_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_RISE_THRESHOLD", "4")); // % rise per poll
     private static final int BOOST_SPEED = Integer.parseInt(System.getenv().getOrDefault("BOOST_SPEED", "3"));
-    private static final int NORMAL_SPEED = Integer.parseInt(System.getenv().getOrDefault("NORMAL_SPEED", "2"));
-    private static final long BOOST_DURATION_MS = Integer.parseInt(System.getenv().getOrDefault("BOOST_DURATION_MINUTES", "30")) * 60 * 1000L;
+    private static final int NORMAL_SPEED = Integer.parseInt(System.getenv().getOrDefault("NORMAL_SPEED", "1"));
+    private static final long BOOST_DURATION_MS = Integer.parseInt(System.getenv().getOrDefault("BOOST_DURATION_MINUTES", "15")) * 60 * 1000L;
     private static final int HUMIDITY_HYSTERESIS = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_HYSTERESIS", "5")); // % below target to exit boost
 
     // General Control Configuration
     private static final int HUMIDITY_VERY_HIGH_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_VERY_HIGH_THRESHOLD", "80"));
     private static final int HUMIDITY_HIGH_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_HIGH_THRESHOLD", "65"));
-    private static final LocalTime NIGHT_START = LocalTime.parse(System.getenv().getOrDefault("NIGHT_START", "23:00"));
+    private static final int HUMIDITY_LOW_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_LOW_THRESHOLD", "30"));
+    private static final LocalTime NIGHT_START = LocalTime.parse(System.getenv().getOrDefault("NIGHT_START", "22:00"));
     private static final LocalTime NIGHT_END = LocalTime.parse(System.getenv().getOrDefault("NIGHT_END", "06:30"));
 
     // Evening Cooling Configuration
@@ -380,6 +382,30 @@ public class HumidityMonitor {
     }
 
     private void pollAndStore() {
+        PollResult result;
+        synchronized (clientLock) {
+            result = pollWithFreshConnection();
+        }
+        if (result == null) {
+            return;
+        }
+
+        if (saveToDatabase(result.humidity(), result.tempSupply(), result.tempOutside(), result.tempExhaust(),
+                result.tempExtract(), result.supplyRpm(), result.fanSpeed())) {
+            log("Logged: Humidity=" + result.humidity() + "%, Temp=" + result.tempSupply() + "C, RPM="
+                    + result.supplyRpm() + (result.boostActive() ? " [BOOST ACTIVE]" : "")
+                    + (result.defrosting() ? " [DEFROSTING]" : ""));
+        } else {
+            log("Read (Not Logged): Humidity=" + result.humidity() + "%, Temp=" + result.tempSupply()
+                    + "C, RPM=" + result.supplyRpm() + (result.boostActive() ? " [BOOST ACTIVE]" : "")
+                    + (result.defrosting() ? " [DEFROSTING]" : ""));
+        }
+
+        updateHomeAssistant(result.humidity(), result.tempSupply(), result.tempOutside(), result.tempExhaust(),
+                result.tempExtract(), result.supplyRpm(), result.fanSpeed());
+    }
+
+    private PollResult pollWithFreshConnection() {
         try {
             client.disconnect();
             log("Establishing connection to Genvex...");
@@ -398,10 +424,6 @@ public class HumidityMonitor {
                 + ", OutsideTempRaw=" + tempOutsideRaw + ", ExhaustTempRaw=" + tempExhaustRaw
                 + ", ExtractTempRaw=" + tempExtractRaw +
                 ", SupplyRPM=" + supplyRpm + ", SupplyDuty=" + supplyDuty + ", ExtractRPM=" + extractRpm);
-
-            if (humidity == -1 || tempSupplyRaw == -1 || supplyRpm == -1) {
-                throw new IOException("Failed to read datapoints (returned -1)");
-            }
 
             checkBoostLogic(humidity);
 
@@ -433,22 +455,30 @@ public class HumidityMonitor {
             lastExtractTemp = tempExtract;
             lastRpm = supplyRpm;
 
-            if (saveToDatabase(humidity, tempSupply, tempOutside, tempExhaust, tempExtract, supplyRpm, currentFanSpeed)) {
-                log("Logged: Humidity=" + humidity + "%, Temp=" + tempSupply + "C, RPM=" + supplyRpm + 
-                    (boostActive ? " [BOOST ACTIVE]" : "") + (isDefrosting ? " [DEFROSTING]" : ""));
-            } else {
-                log("Read (Not Logged): Humidity=" + humidity + "%, Temp=" + tempSupply + "C, RPM=" + supplyRpm + 
-                    (boostActive ? " [BOOST ACTIVE]" : "") + (isDefrosting ? " [DEFROSTING]" : ""));
-            }
-            
-            // Update Home Assistant
-            updateHomeAssistant(humidity, tempSupply, tempOutside, tempExhaust, tempExtract, supplyRpm, currentFanSpeed);
+            return new PollResult(humidity, tempSupply, tempOutside, tempExhaust, tempExtract, supplyRpm,
+                    currentFanSpeed, boostActive, isDefrosting);
 
         } catch (Exception e) {
             logError("Error polling data: " + e.getMessage());
-            e.printStackTrace(); 
+            e.printStackTrace();
+            return null;
         } finally {
             client.disconnect();
+        }
+    }
+
+    private record PollResult(int humidity, double tempSupply, double tempOutside, double tempExhaust,
+            double tempExtract, int supplyRpm, int fanSpeed, boolean boostActive, boolean defrosting) {}
+
+    private void setFanSpeedImmediately(int speed) throws IOException, InterruptedException {
+        synchronized (clientLock) {
+            client.disconnect();
+            try {
+                client.connect();
+                client.setFanSpeed(speed);
+            } finally {
+                client.disconnect();
+            }
         }
     }
 
@@ -521,6 +551,11 @@ public class HumidityMonitor {
         int targetSpeed = NORMAL_SPEED;
         String reason = "Normal";
 
+        if (manualOverrideActive && System.currentTimeMillis() >= manualOverrideEndTime) {
+            manualOverrideActive = false;
+            manualOverrideSpeed = -1;
+        }
+
         // Manual override takes precedence over everything
         if (manualOverrideActive && System.currentTimeMillis() < manualOverrideEndTime) {
             resetEveningCooling();
@@ -544,19 +579,18 @@ public class HumidityMonitor {
                 reason = "Night Mode";
             } else if (humidity >= HUMIDITY_VERY_HIGH_THRESHOLD) {
                 resetEveningCooling();
-                targetSpeed = 3;
+                targetSpeed = Math.max(3, NORMAL_SPEED);
                 reason = "Humidity Very High";
             } else {
                 int coolingSpeed = selectEveningCoolingSpeed(tempSupply, tempOutside, tempExtract, now);
                 if (coolingSpeed > 0) {
                     targetSpeed = coolingSpeed;
                     reason = "Evening Cooling";
-                } else if (humidity >= HUMIDITY_HIGH_THRESHOLD) {
-                    targetSpeed = 2;
-                    reason = "Humidity High";
                 } else {
-                    targetSpeed = 1;
-                    reason = "Humidity Low";
+                    targetSpeed = selectHumiditySpeed(humidity, HUMIDITY_LOW_THRESHOLD,
+                            HUMIDITY_HIGH_THRESHOLD, NORMAL_SPEED);
+                    reason = humidity >= HUMIDITY_HIGH_THRESHOLD ? "Humidity High"
+                            : humidity <= HUMIDITY_LOW_THRESHOLD ? "Humidity Low" : "Normal";
                 }
             }
         }
@@ -590,6 +624,16 @@ public class HumidityMonitor {
                 }
             }
         }
+    }
+
+    static int selectHumiditySpeed(int humidity, int lowThreshold, int highThreshold, int normalSpeed) {
+        if (humidity >= highThreshold) {
+            return Math.max(2, normalSpeed);
+        }
+        if (humidity <= lowThreshold) {
+            return 1;
+        }
+        return normalSpeed;
     }
 
     private int selectEveningCoolingSpeed(double tempSupply, double tempOutside, double tempExtract, LocalTime now) {
@@ -690,10 +734,10 @@ public class HumidityMonitor {
             new Thread(() -> {
                  try {
                      log("Restart sequence: Setting fan to 0...");
-                     client.setFanSpeed(0);
+                     setFanSpeedImmediately(0);
                      Thread.sleep(5000);
                      log("Restart sequence: Setting fan to 1...");
-                     client.setFanSpeed(1);
+                     setFanSpeedImmediately(1);
                      Thread.sleep(5000);
                      log("Restart sequence complete.");
                  } catch (Exception e) {
@@ -715,12 +759,18 @@ public class HumidityMonitor {
                      log("System Mode Request: " + body);
                      
                      String val = getJsonValue(body, "monitor_only", null);
-                     if (val != null) {
-                        monitorOnly = Boolean.parseBoolean(val);
+                            if (val != null && (val.equalsIgnoreCase("true") || val.equalsIgnoreCase("false"))) {
+                                boolean requestedMonitorOnly = Boolean.parseBoolean(val);
+                        synchronized (clientLock) {
+                            monitorOnly = requestedMonitorOnly;
+                            if (requestedMonitorOnly) {
+                                staticRpmMode = false;
+                            }
+                                }
                         log("System Monitor Mode updated to: " + monitorOnly);
                         sendJson(t, "{\"status\": \"ok\", \"monitor_only\": " + monitorOnly + "}");
                      } else {
-                        sendError(t, 400, "Missing monitor_only parameter");
+                                sendError(t, 400, "monitor_only must be true or false");
                      }
                  } catch (Exception e) {
                      sendError(t, 500, e.getMessage());
@@ -798,9 +848,15 @@ public class HumidityMonitor {
         boostActive = true;
         boostActivationHumidity = activationHumidity;
         long now = System.currentTimeMillis();
-        boostMinEndTime = now + (10 * 60 * 1000); // Minimum 10 minutes before checking exit condition
+        boostMinEndTime = now + boostMinimumDurationMillis(BOOST_DURATION_MS);
         boostEndTime = now + BOOST_DURATION_MS; // Absolute maximum
-        log("Boost activated at " + activationHumidity + "% humidity. Min duration: 10 min, Max duration: " + (BOOST_DURATION_MS / 60000) + " min.");
+        log("Boost activated at " + activationHumidity + "% humidity. Min duration: "
+                + (boostMinimumDurationMillis(BOOST_DURATION_MS) / 60000) + " min, Max duration: "
+                + (BOOST_DURATION_MS / 60000) + " min.");
+    }
+
+    static long boostMinimumDurationMillis(long configuredDurationMillis) {
+        return Math.min(10 * 60 * 1000L, configuredDurationMillis);
     }
 
     private void deactivateBoost() {
@@ -836,15 +892,18 @@ public class HumidityMonitor {
             if (level < 0 || level > 4) level = NORMAL_SPEED;
             if (durationMinutes < 1) durationMinutes = 30;
 
-            manualOverrideActive = true;
-            manualOverrideSpeed = level;
-            manualOverrideEndTime = System.currentTimeMillis() + (durationMinutes * 60L * 1000L);
-
             try {
-                client.setFanSpeed(level);
-                currentFanSpeed = level;
+                synchronized (clientLock) {
+                    setFanSpeedImmediately(level);
+                    manualOverrideActive = true;
+                    manualOverrideSpeed = level;
+                    manualOverrideEndTime = System.currentTimeMillis() + (durationMinutes * 60L * 1000L);
+                    currentFanSpeed = level;
+                }
             } catch (Exception e) {
                 logError("Failed to set fan speed via Udluftning: " + e.getMessage());
+                sendError(t, 502, "Genvex did not acknowledge the fan speed command");
+                return;
             }
 
             String json = String.format("{\"ok\":true,\"level\":%d,\"minutes\":%d,\"until\":%d}", level, durationMinutes, manualOverrideEndTime);
@@ -862,25 +921,44 @@ public class HumidityMonitor {
                 String enabledStr = getJsonValue(payload, "enabled", null);
                 String speedStr = getJsonValue(payload, "speed", null);
                 
-                if (enabledStr != null) {
-                    staticRpmMode = Boolean.parseBoolean(enabledStr);
+                if (enabledStr == null || (!enabledStr.equalsIgnoreCase("true") && !enabledStr.equalsIgnoreCase("false"))) {
+                    sendError(t, 400, "enabled must be true or false");
+                    return;
                 }
+
+                boolean requestedEnabled = Boolean.parseBoolean(enabledStr);
+                int requestedSpeed = staticRpmSpeed;
                 if (speedStr != null) {
                     try {
-                        staticRpmSpeed = Integer.parseInt(speedStr);
-                    } catch (NumberFormatException e) {}
+                        requestedSpeed = Integer.parseInt(speedStr);
+                    } catch (NumberFormatException e) {
+                        sendError(t, 400, "speed must be an integer from 0 to 4");
+                        return;
+                    }
+                }
+                if (requestedSpeed < 0 || requestedSpeed > 4) {
+                    sendError(t, 400, "speed must be an integer from 0 to 4");
+                    return;
                 }
                 
-                if (staticRpmMode) {
-                    try {
-                        client.setFanSpeed(staticRpmSpeed);
-                        currentFanSpeed = staticRpmSpeed;
-                        log("Static RPM Mode Activated: Speed " + staticRpmSpeed);
-                    } catch (Exception e) {
-                        logError("Failed to set fan speed for Static Mode: " + e.getMessage());
+                try {
+                    synchronized (clientLock) {
+                        if (requestedEnabled) {
+                        setFanSpeedImmediately(requestedSpeed);
+                            monitorOnly = false;
+                            currentFanSpeed = requestedSpeed;
+                            log("Static RPM Mode Activated: Speed " + requestedSpeed);
+                        } else {
+                            log("Static RPM Mode Deactivated. Resuming auto control.");
+                        }
+
+                        staticRpmMode = requestedEnabled;
+                        staticRpmSpeed = requestedSpeed;
                     }
-                } else {
-                    log("Static RPM Mode Deactivated. Resuming auto control.");
+                } catch (Exception e) {
+                    logError("Failed to set fan speed for Static Mode: " + e.getMessage());
+                    sendError(t, 502, "Genvex did not acknowledge the fan speed command");
+                    return;
                 }
             }
             

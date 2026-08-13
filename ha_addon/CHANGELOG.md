@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.47
+
+- Fixed dashboard fan controls after the per-poll connection change by giving commands fresh serialized sessions, returning validation/device errors, and recording control state only after acknowledgement.
+- Hardened UDP response handling against delayed or foreign packets by validating endpoint, session IDs, sequence, packet lengths, command envelope, and checksum; failed handshakes now close their sockets.
+- Fixed ignored `normal_speed` and `humidity_low_threshold` settings, kept fan speed monotonic as humidity rises, aligned standalone defaults with add-on defaults, and corrected shorter boost durations being extended to ten minutes.
+- Reduced control latency by releasing the Genvex lock before database and Home Assistant I/O, cleared expired manual override state, and enforced mutually exclusive monitor/static modes.
+- Added regression coverage for packet correlation, humidity thresholds, and boost duration boundaries.
+
 ## 1.46
 
 - Fixed recurring datapoint timeouts by establishing a fresh Genvex UDP session for every polling cycle instead of reusing a session after the unit's idle timeout.
