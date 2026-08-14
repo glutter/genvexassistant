@@ -71,7 +71,7 @@ A dedicated background service (`HumidityMonitor`) is available to automate fan 
 
 ### Features
 1.  **Data Logging**: Polls humidity, all four air temperatures, fan RPM, and fan speed every 30 seconds and stores them in a SQLite database.
-2.  **Boost Mode**: Automatically detects rapid humidity rises (e.g., during a shower) and boosts fan speed to Level 3 for 15 minutes.
+2.  **Humidity Recovery**: Detects rapid humidity rises, stages fan speed from the delta above the previous 30-minute average, and continues beyond the initial 15-minute window until humidity returns within 1 percentage point of that baseline.
 3.  **Night Mode**: Uses fan speed 1 between 22:00 and 06:30 when active cooling is not needed.
 4.  **Evening Cooling**: After sunset, uses cooler outside/supply air at speed 2, including overnight, and escalates to speed 3 only if indoor temperature does not improve.
 5.  **General Control**:
@@ -92,6 +92,8 @@ A dedicated background service (`HumidityMonitor`) is available to automate fan 
     - `GENVEX_EMAIL`: Email/password for Genvex connection
     - `POLL_INTERVAL`: Polling interval in seconds (default: 30)
     - `MONITOR_ONLY`: Disable automatic fan writes for passive monitoring (default: false)
+    - `HUMIDITY_BASELINE_MINUTES`: Historical window used for the pre-rise humidity average (default: 30)
+    - `HUMIDITY_RECOVERY_TOLERANCE`: Percentage points above the average accepted as recovered (default: 1)
     - `TEMP_SUPPLY_OFFSET_RAW`: Shared raw calibration offset for all temperature sensors (legacy name, default: -300)
     - `EVENING_COOLING_ENABLED`: Enable sunset-aware cooling (default: true)
     - `COOLING_STOP_TEMP`: Indoor/extract temperature where cooling stops in °C (default: 22.0)

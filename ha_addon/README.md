@@ -37,10 +37,12 @@ Before starting, configure the add-on in the **Configuration** tab:
 - `poll_interval`: How often to read data in seconds (default: 30).
 - `boost_enabled`: Enable/Disable automatic fan boost on humidity rise.
 - `humidity_rise_threshold`: Percentage rise in humidity to trigger boost (default: 4).
-- `boost_speed`: Fan speed level for boost (default: 3).
+- `boost_speed`: Ceiling for delta-driven recovery speed; absolute high-humidity protection may demand more (default: 3).
 - `normal_speed`: Fan speed level between the low and high humidity thresholds (default: 1).
 - `monitor_only`: Disable automatic fan writes for passive monitoring (default: false).
-- `boost_duration_minutes`: How long boost stays active (default: 15).
+- `boost_duration_minutes`: Initial boost window; recovery continues afterward while humidity remains elevated (default: 15).
+- `humidity_baseline_minutes`: Historical window used to calculate pre-rise average humidity (default: 30).
+- `humidity_recovery_tolerance`: Allowed percentage points above the historical average before recovery ends (default: 1).
 - `humidity_high_threshold`: Humidity level to trigger high speed (default: 65).
 - `humidity_low_threshold`: Humidity level at or below which speed 1 is used (default: 30).
 - `night_start`: Start time for night mode (HH:mm, default: 22:00).

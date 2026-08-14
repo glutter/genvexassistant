@@ -15,6 +15,8 @@ if [ -f "$CONFIG_PATH" ]; then
     export BOOST_SPEED=$(jq --raw-output '.boost_speed' $CONFIG_PATH)
     export NORMAL_SPEED=$(jq --raw-output '.normal_speed' $CONFIG_PATH)
     export BOOST_DURATION_MINUTES=$(jq --raw-output '.boost_duration_minutes' $CONFIG_PATH)
+    export HUMIDITY_BASELINE_MINUTES=$(jq --raw-output '.humidity_baseline_minutes // 30' $CONFIG_PATH)
+    export HUMIDITY_RECOVERY_TOLERANCE=$(jq --raw-output '.humidity_recovery_tolerance // 1' $CONFIG_PATH)
     export HUMIDITY_VERY_HIGH_THRESHOLD=$(jq --raw-output '.humidity_very_high_threshold' $CONFIG_PATH)
     export HUMIDITY_HIGH_THRESHOLD=$(jq --raw-output '.humidity_high_threshold' $CONFIG_PATH)
     export HUMIDITY_LOW_THRESHOLD=$(jq --raw-output '.humidity_low_threshold' $CONFIG_PATH)
@@ -36,6 +38,7 @@ echo "  Genvex IP: $GENVEX_IP"
 echo "  Poll Interval: $POLL_INTERVAL s"
 echo "  Monitor Only: $MONITOR_ONLY"
 echo "  Boost Enabled: $BOOST_ENABLED"
+echo "  Humidity Recovery: $HUMIDITY_BASELINE_MINUTES min baseline, +$HUMIDITY_RECOVERY_TOLERANCE% tolerance"
 echo "  Temperature Sensor Offset Raw: $TEMP_SUPPLY_OFFSET_RAW"
 echo "  Evening Cooling: $EVENING_COOLING_ENABLED (start $COOLING_START_TEMP C, stop $COOLING_STOP_TEMP C, supply floor $COOLING_MIN_SUPPLY_TEMP C)"
 

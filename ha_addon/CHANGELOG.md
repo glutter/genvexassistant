@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.50
+
+- Replaced the fixed humidity-boost cutoff with recovery against the persisted pre-rise humidity average; elevated humidity now keeps ventilation active beyond the initial boost window, including at night.
+- Detects gradual increases against the historical average instead of requiring the full rise within one polling interval.
+- Made recovery fan speed follow the remaining humidity delta, stepping down as the historical baseline is approached while preserving manual, static, cooling, night, and high-humidity priorities.
+- Added configurable baseline window and recovery tolerance, plus dashboard status for the initial and extended recovery phases.
+
 ## 1.49
 
 - Restored nighttime humidity protection so high and very-high humidity can override quiet speed even when cooling is unavailable, while preserving warm-night cooling behavior.

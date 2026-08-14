@@ -519,7 +519,10 @@
                 banner.innerHTML = `<i class="fas fa-hourglass-half"></i><span><strong>Manual override</strong> · Speed ${data.commanded_speed} · ${Math.ceil(data.manual_override_secs_left / 60)} min remaining</span>`;
             } else if (data.boost) {
                 banner.className = 'status-banner is-visible boost';
-                banner.innerHTML = `<i class="fas fa-shower"></i><span><strong>Humidity boost</strong> · Speed ${data.commanded_speed} · ${Math.ceil(data.boost_secs_left / 60)} min remaining</span>`;
+                const boostStatus = data.boost_extended
+                    ? `${data.humidity}% → target ${data.boost_recovery_target.toFixed(1)}%`
+                    : `${Math.ceil(data.boost_secs_left / 60)} min initial phase`;
+                banner.innerHTML = `<i class="fas fa-shower"></i><span><strong>Humidity recovery</strong> · Speed ${data.commanded_speed} · ${boostStatus}</span>`;
             } else if (data.evening_cooling) {
                 banner.className = 'status-banner is-visible cooling';
                 banner.innerHTML = `<i class="fas fa-moon"></i><span><strong>Evening cooling</strong> · Speed ${data.evening_cooling_speed} · Indoor ${formatTemperature(data.temp_extract)} · Outside ${formatTemperature(data.temp_outside)}</span>`;
