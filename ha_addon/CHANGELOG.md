@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.51
+
+- Added verified read-only bypass status from datapoint 53 to live telemetry, SQLite history, and time-bucketed history responses.
+- Added a compact live bypass tile with distinct open, closed, and unknown icons plus a toggleable stepped open/closed graph series.
+- Clarified that evening cooling currently controls fan speed only; bypass operation remains with the Genvex controller because no bypass write address has been verified.
+- Prevented an optional bypass timeout from invalidating a fan command in the same poll, and aligned live/history bypass JSON values as boolean or null.
+- Fixed gradual humidity rises being absorbed by the moving average, preserved stronger evening-cooling targets during recovery, and honor the complete configured initial recovery window.
+- Persist humidity recovery across add-on restarts, including its frozen pre-rise baseline, while respecting disabled boost and monitor mode at startup.
+
 ## 1.50
 
 - Replaced the fixed humidity-boost cutoff with recovery against the persisted pre-rise humidity average; elevated humidity now keeps ventilation active beyond the initial boost window, including at night.

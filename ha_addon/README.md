@@ -57,10 +57,12 @@ Before starting, configure the add-on in the **Configuration** tab:
 
 When indoor air remains warm and outside/supply air can cool it, evening cooling overrides quiet night speed. It starts at speed 2, may escalate to speed 3 after the configured progress interval, and returns to speed 1 when cooling is no longer useful.
 
+The dashboard also records and displays the unit's bypass open/closed status. This is read-only telemetry: evening cooling controls fan speed, while the Genvex controller itself decides whether to open the bypass.
+
 ## Database
 
 This add-on uses an internal SQLite database to store history. No external database configuration is required.
-The database is stored in `/data/genvex.db` and persists across restarts.
+The database is stored in `/data/genvex.db` and persists across restarts. It includes humidity, temperatures, fan activity, and bypass open/closed history.
 
 ## Dashboard
 
@@ -98,4 +100,5 @@ The add-on exports sensors to Home Assistant. You can use the standard **History
 - `sensor.genvex_temp_extract`
 - `sensor.genvex_fan_rpm`
 - `sensor.genvex_fan_speed`
+- `sensor.genvex_bypass`
 

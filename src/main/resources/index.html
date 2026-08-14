@@ -157,7 +157,7 @@
         .icon-btn:hover { color: var(--text-color); background: var(--surface-hover); transform: none; }
         .section-heading { min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 7px; }
         .section-meta { color: var(--secondary-text); font-size: 0.74rem; }
-        .live-data { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 7px; margin-bottom: 10px; }
+        .live-data { grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 7px; margin-bottom: 10px; }
         .data-point {
             min-width: 0;
             min-height: 74px;
@@ -185,6 +185,9 @@
             background: #14241e;
             font-size: 0.86rem;
         }
+        .data-icon.bypass-open { color: var(--accent-color); background: #14241e; }
+        .data-icon.bypass-closed { color: var(--warning-color); background: #282116; }
+        .data-icon.bypass-unknown { color: var(--secondary-text); background: var(--surface-raised); }
         .data-label { min-width: 0; overflow: hidden; margin: 0; font-size: 0.68rem; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; text-transform: none; letter-spacing: 0; }
         .data-value { min-width: 0; overflow: hidden; font-family: 'Sora', sans-serif; font-size: 1.08rem; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
         .status-banner {
@@ -266,7 +269,6 @@
             .connection-state { width: 32px; justify-content: center; padding: 0; }
             .live-data { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .data-point { min-height: 68px; }
-            .data-point:last-child { grid-column: 1 / -1; }
             .control-grid { grid-template-columns: minmax(0, 1fr); }
             .control-card { padding: 12px; }
             .chart-panel { padding: 12px 8px 6px; }
@@ -345,6 +347,11 @@
                     <div class="data-icon"><i class="fas fa-gauge-high"></i></div>
                     <div class="data-label">Fan speed</div>
                     <div class="data-value" id="live-speed">--</div>
+                </div>
+                <div class="data-point">
+                    <div class="data-icon bypass-unknown" id="bypass-icon"><i class="fas fa-circle-question"></i></div>
+                    <div class="data-label">Bypass</div>
+                    <div class="data-value" id="live-bypass">Unknown</div>
                 </div>
             </div>
         </section>
@@ -430,6 +437,7 @@
                 <button class="series-toggle" style="--series-color: #ad8be8" data-series="tempExhaust" aria-pressed="false" onclick="toggleSeries('tempExhaust')"><span class="series-swatch"></span>Exhaust</button>
                 <button class="series-toggle active" style="--series-color: #ef6b73" data-series="rpm" aria-pressed="true" onclick="toggleSeries('rpm')"><span class="series-swatch"></span>RPM</button>
                 <button class="series-toggle" style="--series-color: #f4d35e" data-series="fanSpeed" aria-pressed="false" onclick="toggleSeries('fanSpeed')"><span class="series-swatch"></span>Fan speed</button>
+                <button class="series-toggle" style="--series-color: #e58f65" data-series="bypass" aria-pressed="false" onclick="toggleSeries('bypass')"><i class="fas fa-door-open" aria-hidden="true"></i>Bypass</button>
             </div>
             <div class="chart-container">
                 <canvas id="mainChart"></canvas>
@@ -457,7 +465,8 @@
             tempOutside: true,
             tempExhaust: false,
             rpm: true,
-            fanSpeed: false
+            fanSpeed: false,
+            bypass: false
         };
 
         function setRange(range) {
@@ -512,6 +521,7 @@
             document.getElementById('live-temp-exhaust').textContent = formatTemperature(data.temp_exhaust);
             document.getElementById('live-rpm').textContent = data.rpm;
             document.getElementById('live-speed').textContent = data.fan_speed;
+            updateBypassDisplay(data.bypass_open);
 
             const banner = document.getElementById('status-banner');
             if (data.manual_override_active) {
@@ -561,6 +571,24 @@
             return Number.isFinite(value) ? value.toFixed(1) + '°C' : '--°C';
         }
 
+        function updateBypassDisplay(isOpen) {
+            const value = document.getElementById('live-bypass');
+            const icon = document.getElementById('bypass-icon');
+            if (isOpen === true) {
+                value.textContent = 'Open';
+                icon.className = 'data-icon bypass-open';
+                icon.innerHTML = '<i class="fas fa-door-open"></i>';
+            } else if (isOpen === false) {
+                value.textContent = 'Closed';
+                icon.className = 'data-icon bypass-closed';
+                icon.innerHTML = '<i class="fas fa-door-closed"></i>';
+            } else {
+                value.textContent = 'Unknown';
+                icon.className = 'data-icon bypass-unknown';
+                icon.innerHTML = '<i class="fas fa-circle-question"></i>';
+            }
+        }
+
         function toggleSeries(seriesKey) {
             const visible = !chartSeriesVisibility[seriesKey];
             chartSeriesVisibility[seriesKey] = visible;
@@ -583,6 +611,7 @@
                 .some(seriesKey => chartSeriesVisibility[seriesKey]);
             chart.options.scales.y1.display = chartSeriesVisibility.rpm;
             chart.options.scales.y2.display = chartSeriesVisibility.fanSpeed;
+            chart.options.scales.y3.display = chartSeriesVisibility.bypass;
         }
 
         function updateChart(data) {
@@ -592,6 +621,8 @@
             const humidity = data.map(d => d.humidity);
             const rpm = data.map(d => d.rpm);
             const fanSpeed = data.map(d => d.fan_speed);
+            const bypass = data.map(d => d.bypass_open == null
+                ? null : (d.bypass_open === true || d.bypass_open === 1 ? 1 : 0));
             const tempSupply = data.map(d => d.temp_supply ?? d.temp);
             const tempExtract = data.map(d => d.temp_extract);
             const tempOutside = data.map(d => d.temp_outside);
@@ -683,6 +714,20 @@
                             borderWidth: 2,
                             borderDash: [5, 3],
                             hidden: !chartSeriesVisibility.fanSpeed
+                        },
+                        {
+                            seriesKey: 'bypass',
+                            label: 'Bypass',
+                            data: bypass,
+                            borderColor: '#e58f65',
+                            backgroundColor: 'rgba(229, 143, 101, 0.16)',
+                            yAxisID: 'y3',
+                            stepped: true,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                            fill: true,
+                            spanGaps: false,
+                            hidden: !chartSeriesVisibility.bypass
                         }
                     ]
                 },
@@ -702,7 +747,12 @@
                             titleColor: '#fff',
                             bodyColor: '#ccc',
                             borderColor: '#444',
-                            borderWidth: 1
+                            borderWidth: 1,
+                            callbacks: {
+                                label: context => context.dataset.seriesKey === 'bypass'
+                                    ? `Bypass: ${context.parsed.y === 1 ? 'Open' : 'Closed'}`
+                                    : `${context.dataset.label}: ${context.formattedValue}`
+                            }
                         }
                     },
                     scales: {
@@ -767,6 +817,24 @@
                             title: {
                                 display: true,
                                 text: 'Speed',
+                                color: '#b0b0b0'
+                            }
+                        },
+                        y3: {
+                            type: 'linear',
+                            display: chartSeriesVisibility.bypass,
+                            position: 'right',
+                            min: 0,
+                            max: 1,
+                            ticks: {
+                                color: '#b0b0b0',
+                                stepSize: 1,
+                                callback: value => value === 1 ? 'Open' : 'Closed'
+                            },
+                            grid: { drawOnChartArea: false },
+                            title: {
+                                display: true,
+                                text: 'Bypass',
                                 color: '#b0b0b0'
                             }
                         }

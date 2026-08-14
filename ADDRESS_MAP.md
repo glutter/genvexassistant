@@ -23,6 +23,7 @@ This document lists the known Micro Nabto addresses for the Genvex Optima 270 ve
 | **Temp Exhaust** | **22** | °C ((Raw + offset) / 10) | Shared default offset is `-300`. |
 | **Temp Extract** | **23** | °C ((Raw + offset) / 10) | Shared default offset is `-300`. |
 | **Humidity** | **26** | % | E.g., `58` = 58%. |
+| **Bypass Active** | **53** | Binary | `0` = closed; positive values are treated as active/open. Read-only status verified on the target unit; no write address is known. |
 
 ## Other Potential Addresses (Unverified)
 
@@ -31,7 +32,6 @@ Based on `optima270.py` reference:
 *   **Temp Frost Protection:** 24 (Read) - *Conflict with Fan Speed Write?*
 *   **Preheat PWM:** 41
 *   **Reheat PWM:** 42
-*   **Bypass Active:** 53
 *   **Bypass Analog:** 40
 *   **Alarm:** 38
 *   **Rotor Speed:** 50

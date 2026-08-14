@@ -8,7 +8,7 @@ A Java-based client for communicating with Genvex ventilation systems (specifica
 
 ![Dashboard Demo](demo_image.png)
 
-The history graph can independently show or hide humidity, supply, indoor/extract, outside, and exhaust temperatures, fan RPM, and fan speed across day, week, and month ranges.
+The history graph can independently show or hide humidity, supply, indoor/extract, outside, and exhaust temperatures, fan RPM, fan speed, and bypass open/closed state across day, week, and month ranges.
 
 ## Protocol Details
 
@@ -74,6 +74,7 @@ A dedicated background service (`HumidityMonitor`) is available to automate fan 
 2.  **Humidity Recovery**: Detects rapid humidity rises, stages fan speed from the delta above the previous 30-minute average, and continues beyond the initial 15-minute window until humidity returns within 1 percentage point of that baseline.
 3.  **Night Mode**: Uses fan speed 1 between 22:00 and 06:30 when active cooling is not needed.
 4.  **Evening Cooling**: After sunset, uses cooler outside/supply air at speed 2, including overnight, and escalates to speed 3 only if indoor temperature does not improve.
+5.  **Bypass Monitoring**: Reads bypass open/closed state from datapoint 53, stores it in history, and displays it with state-specific icons. Cooling changes fan speed only; the unit's own controller operates the bypass because no verified bypass write address is available.
 5.  **General Control**:
     *   **> 60% Humidity**: Speed 3 (High)
     *   **< 30% Humidity**: Speed 1 (Low)

@@ -19,6 +19,8 @@ class HistorySchemaMigrationTest {
 
             HumidityMonitor.ensureHistoryColumns(conn);
             HumidityMonitor.ensureHistoryColumns(conn);
+            HumidityMonitor.ensureControlStateTable(conn);
+            HumidityMonitor.ensureControlStateTable(conn);
 
             Set<String> columns = new HashSet<>();
             try (ResultSet rs = stmt.executeQuery("PRAGMA table_info(humidity_readings)")) {
@@ -31,6 +33,7 @@ class HistorySchemaMigrationTest {
             assertTrue(columns.contains("temp_exhaust"));
             assertTrue(columns.contains("temp_extract"));
             assertTrue(columns.contains("fan_speed_level"));
+            assertTrue(columns.contains("bypass_open"));
 
             boolean timestampIndexFound = false;
             try (ResultSet rs = stmt.executeQuery("PRAGMA index_list(humidity_readings)")) {
@@ -39,6 +42,11 @@ class HistorySchemaMigrationTest {
                 }
             }
             assertTrue(timestampIndexFound);
+
+            try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) AS row_count FROM control_state")) {
+                assertTrue(rs.next());
+                assertTrue(rs.getInt("row_count") == 1);
+            }
         }
     }
 }

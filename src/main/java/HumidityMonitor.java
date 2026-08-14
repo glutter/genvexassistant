@@ -84,11 +84,13 @@ public class HumidityMonitor {
     private double lastExhaustTemp = -1.0;
     private double lastExtractTemp = -1.0;
     private int lastRpm = -1;
+    private int lastBypassState = -1;
     private boolean boostActive = false;
     private long boostEndTime = 0;
     private long boostMinEndTime = 0; // Minimum boost duration before allowing deactivation
     private double boostBaselineHumidity = Double.NaN;
     private boolean boostExtensionLogged = false;
+    private double humidityRiseCandidateBaseline = Double.NaN;
     private int commandedFanSpeed = -1;
     private int lastObservedFanSpeed = -1;
     private int dbErrorCount = 0;
@@ -112,6 +114,10 @@ public class HumidityMonitor {
     }
 
     public void start() {
+        validateControlConfiguration(HUMIDITY_RISE_THRESHOLD, HUMIDITY_BASELINE_MINUTES,
+                HUMIDITY_RECOVERY_TOLERANCE, BOOST_DURATION_MS, BOOST_SPEED, NORMAL_SPEED,
+                HUMIDITY_LOW_THRESHOLD, HUMIDITY_HIGH_THRESHOLD, HUMIDITY_VERY_HIGH_THRESHOLD);
+
         // Initialize Database
         initializeDatabase();
 
@@ -134,6 +140,30 @@ public class HumidityMonitor {
         System.out.println("Humidity Monitor started. Session ID: " + sessionId);
     }
 
+    static void validateControlConfiguration(int riseThreshold, int baselineMinutes,
+            int recoveryTolerance, long boostDurationMillis, int boostSpeed, int normalSpeed,
+            int lowThreshold, int highThreshold, int veryHighThreshold) {
+        if (riseThreshold <= 0 || riseThreshold > 100) {
+            throw new IllegalArgumentException("HUMIDITY_RISE_THRESHOLD must be from 1 to 100");
+        }
+        if (baselineMinutes <= 0) {
+            throw new IllegalArgumentException("HUMIDITY_BASELINE_MINUTES must be positive");
+        }
+        if (recoveryTolerance < 0 || recoveryTolerance > 100) {
+            throw new IllegalArgumentException("HUMIDITY_RECOVERY_TOLERANCE must be from 0 to 100");
+        }
+        if (boostDurationMillis <= 0) {
+            throw new IllegalArgumentException("BOOST_DURATION_MINUTES must be positive");
+        }
+        if (boostSpeed < 0 || boostSpeed > 4 || normalSpeed < 0 || normalSpeed > 4) {
+            throw new IllegalArgumentException("BOOST_SPEED and NORMAL_SPEED must be from 0 to 4");
+        }
+        if (lowThreshold < 0 || lowThreshold >= highThreshold
+                || highThreshold > veryHighThreshold || veryHighThreshold > 100) {
+            throw new IllegalArgumentException("Humidity thresholds must satisfy 0 <= low < high <= very high <= 100");
+        }
+    }
+
     private void initializeDatabase() {
         String sql = "CREATE TABLE IF NOT EXISTS humidity_readings (" +
                      "timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, " +
@@ -143,12 +173,16 @@ public class HumidityMonitor {
                      "temp_exhaust REAL, " +
                      "temp_extract REAL, " +
                      "fan_rpm INTEGER, " +
-                     "fan_speed_level INTEGER)";
+                     "fan_speed_level INTEGER, " +
+                     "bypass_open INTEGER)";
         
         try (Connection conn = DriverManager.getConnection(DB_URL);
              Statement stmt = conn.createStatement()) {
             stmt.execute(sql);
             ensureHistoryColumns(conn);
+            ensureControlStateTable(conn);
+            restoreControlState(loadControlState(conn));
+            saveControlState(conn, controlStateSnapshot());
             log("Database initialized at " + DB_PATH);
         } catch (SQLException e) {
             logError("Failed to initialize database: " + e.getMessage());
@@ -160,10 +194,58 @@ public class HumidityMonitor {
         addColumnIfMissing(conn, "temp_exhaust", "REAL");
         addColumnIfMissing(conn, "temp_extract", "REAL");
         addColumnIfMissing(conn, "fan_speed_level", "INTEGER");
+        addColumnIfMissing(conn, "bypass_open", "INTEGER");
         try (Statement stmt = conn.createStatement()) {
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_humidity_timestamp ON humidity_readings(timestamp)");
         }
     }
+
+    static void ensureControlStateTable(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE IF NOT EXISTS control_state ("
+                    + "id INTEGER PRIMARY KEY CHECK (id = 1), "
+                    + "boost_active INTEGER NOT NULL DEFAULT 0, "
+                    + "boost_baseline REAL, "
+                    + "boost_min_end INTEGER NOT NULL DEFAULT 0, "
+                    + "boost_end INTEGER NOT NULL DEFAULT 0, "
+                    + "rise_candidate REAL)");
+            statement.execute("INSERT OR IGNORE INTO control_state (id) VALUES (1)");
+        }
+    }
+
+    static void saveControlState(Connection connection, ControlState state) throws SQLException {
+        String sql = "UPDATE control_state SET boost_active = ?, boost_baseline = ?, "
+                + "boost_min_end = ?, boost_end = ?, rise_candidate = ? WHERE id = 1";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setInt(1, state.boostActive() ? 1 : 0);
+            setNullableDouble(statement, 2, state.boostBaseline());
+            statement.setLong(3, state.boostMinEnd());
+            statement.setLong(4, state.boostEnd());
+            setNullableDouble(statement, 5, state.riseCandidate());
+            statement.executeUpdate();
+        }
+    }
+
+    static ControlState loadControlState(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery("SELECT boost_active, boost_baseline, "
+                     + "boost_min_end, boost_end, rise_candidate FROM control_state WHERE id = 1")) {
+            if (result.next()) {
+                boolean active = result.getInt("boost_active") == 1;
+                double baseline = result.getDouble("boost_baseline");
+                if (result.wasNull()) baseline = Double.NaN;
+                long minimumEnd = result.getLong("boost_min_end");
+                long end = result.getLong("boost_end");
+                double candidate = result.getDouble("rise_candidate");
+                if (result.wasNull()) candidate = Double.NaN;
+                return new ControlState(active, baseline, minimumEnd, end, candidate);
+            }
+        }
+        return new ControlState(false, Double.NaN, 0, 0, Double.NaN);
+    }
+
+    static record ControlState(boolean boostActive, double boostBaseline, long boostMinEnd,
+            long boostEnd, double riseCandidate) {}
 
     private static void addColumnIfMissing(Connection conn, String columnName, String columnType) throws SQLException {
         try (Statement stmt = conn.createStatement();
@@ -237,7 +319,8 @@ public class HumidityMonitor {
             synchronized (clientLock) {
                 long now = System.currentTimeMillis();
                 snapshot = new LiveSnapshot(lastHumidity, lastSupplyTemp, lastOutsideTemp, lastExhaustTemp,
-                        lastExtractTemp, lastRpm, lastObservedFanSpeed, commandedFanSpeed, boostActive,
+                    lastExtractTemp, lastRpm, lastBypassState, lastObservedFanSpeed, commandedFanSpeed,
+                    boostActive,
                     boostBaselineHumidity + HUMIDITY_RECOVERY_TOLERANCE,
                     boostActive && now >= boostEndTime,
                         eveningCoolingActive, eveningCoolingSpeed, staticRpmMode, staticRpmSpeed, monitorOnly,
@@ -247,10 +330,11 @@ public class HumidityMonitor {
             }
 
             String json = String.format(Locale.ROOT,
-                "{\"humidity\":%d, \"temp\":%s, \"temp_supply\":%s, \"temp_outside\":%s, \"temp_exhaust\":%s, \"temp_extract\":%s, \"rpm\":%d, \"fan_speed\":%d, \"commanded_speed\":%d, \"boost\":%b, \"boost_recovery_target\":%s, \"boost_extended\":%b, \"evening_cooling\":%b, \"evening_cooling_speed\":%d, \"static_mode\":%b, \"static_speed\":%d, \"monitor_only\":%b, \"manual_override_active\":%b, \"manual_override_secs_left\":%d, \"boost_secs_left\":%d}",
+                "{\"humidity\":%d, \"temp\":%s, \"temp_supply\":%s, \"temp_outside\":%s, \"temp_exhaust\":%s, \"temp_extract\":%s, \"rpm\":%d, \"bypass_open\":%s, \"fan_speed\":%d, \"commanded_speed\":%d, \"boost\":%b, \"boost_recovery_target\":%s, \"boost_extended\":%b, \"evening_cooling\":%b, \"evening_cooling_speed\":%d, \"static_mode\":%b, \"static_speed\":%d, \"monitor_only\":%b, \"manual_override_active\":%b, \"manual_override_secs_left\":%d, \"boost_secs_left\":%d}",
                 snapshot.humidity(), jsonTemperature(snapshot.tempSupply()), jsonTemperature(snapshot.tempSupply()),
                 jsonTemperature(snapshot.tempOutside()), jsonTemperature(snapshot.tempExhaust()),
-                jsonTemperature(snapshot.tempExtract()), snapshot.rpm(), snapshot.observedFanSpeed(),
+                jsonTemperature(snapshot.tempExtract()), snapshot.rpm(), jsonBypassState(snapshot.bypassState()),
+                snapshot.observedFanSpeed(),
                 snapshot.commandedFanSpeed(), snapshot.boostActive(),
                 jsonTemperature(snapshot.boostRecoveryTarget()), snapshot.boostExtended(),
                 snapshot.eveningCoolingActive(),
@@ -261,8 +345,9 @@ public class HumidityMonitor {
         }
     }
 
-    private record LiveSnapshot(int humidity, double tempSupply, double tempOutside, double tempExhaust,
-            double tempExtract, int rpm, int observedFanSpeed, int commandedFanSpeed, boolean boostActive,
+        private record LiveSnapshot(int humidity, double tempSupply, double tempOutside, double tempExhaust,
+            double tempExtract, int rpm, int bypassState, int observedFanSpeed, int commandedFanSpeed,
+            boolean boostActive,
             double boostRecoveryTarget, boolean boostExtended,
             boolean eveningCoolingActive, int eveningCoolingSpeed, boolean staticMode, int staticSpeed,
             boolean monitorOnly, boolean manualOverrideActive, long manualOverrideSecsLeft, long boostSecsLeft) {}
@@ -369,12 +454,14 @@ public class HumidityMonitor {
                     String tempExhaust = nullableJsonNumber(rs, "temp_exhaust");
                     String tempExtract = nullableJsonNumber(rs, "temp_extract");
                     String fanSpeed = nullableJsonInteger(rs, "fan_speed_level");
+                    String bypassOpen = nullableJsonBypassState(rs, "bypass_open");
 
                     json.append(String.format(Locale.ROOT,
                         "{\"timestamp\":\"%s\", \"humidity\":%d, \"temp\":%s, \"temp_supply\":%s, " +
                         "\"temp_outside\":%s, \"temp_exhaust\":%s, \"temp_extract\":%s, " +
-                        "\"rpm\":%d, \"fan_speed\":%s}",
-                        ts, humidity, tempSupply, tempSupply, tempOutside, tempExhaust, tempExtract, rpm, fanSpeed
+                        "\"rpm\":%d, \"fan_speed\":%s, \"bypass_open\":%s}",
+                        ts, humidity, tempSupply, tempSupply, tempOutside, tempExhaust, tempExtract, rpm,
+                        fanSpeed, bypassOpen
                     ));
                 }
 
@@ -391,7 +478,7 @@ public class HumidityMonitor {
 
             static String historyQuery(String timeFilter, int bucketSeconds) {
                 String columns = "timestamp, humidity, temp_supply, temp_outside, temp_exhaust, temp_extract, "
-                    + "fan_rpm, fan_speed_level";
+                    + "fan_rpm, fan_speed_level, bypass_open";
                 String filtered = " FROM humidity_readings WHERE timestamp >= datetime('now', '" + timeFilter + "')";
                 if (bucketSeconds <= 0) {
                 return "SELECT strftime('%Y-%m-%dT%H:%M:%SZ', timestamp) AS timestamp_utc, "
@@ -415,6 +502,11 @@ public class HumidityMonitor {
             int value = rs.getInt(columnName);
             return rs.wasNull() ? "null" : String.valueOf(value);
         }
+
+        private static String nullableJsonBypassState(ResultSet rs, String columnName) throws SQLException {
+            int value = rs.getInt(columnName);
+            return rs.wasNull() ? "null" : jsonBypassState(normalizeBypassState(value));
+        }
     }
 
     private void pollAndStore() {
@@ -428,8 +520,10 @@ public class HumidityMonitor {
             return;
         }
 
+        persistControlState(controlStateSnapshot());
+
         if (saveToDatabase(result.humidity(), result.tempSupply(), result.tempOutside(), result.tempExhaust(),
-            result.tempExtract(), result.supplyRpm(), result.observedFanSpeed())) {
+            result.tempExtract(), result.supplyRpm(), result.observedFanSpeed(), result.bypassState())) {
             log("Logged: Humidity=" + result.humidity() + "%, Temp=" + result.tempSupply() + "C, RPM="
                     + result.supplyRpm() + (result.boostActive() ? " [BOOST ACTIVE]" : "")
                     + (result.defrosting() ? " [DEFROSTING]" : ""));
@@ -461,11 +555,6 @@ public class HumidityMonitor {
                 throw new IOException("Required datapoint is unavailable");
             }
 
-            log("Polled Data: Humidity=" + humidity + "%, SupplyTempRaw=" + tempSupplyRaw
-                + ", OutsideTempRaw=" + tempOutsideRaw + ", ExhaustTempRaw=" + tempExhaustRaw
-                + ", ExtractTempRaw=" + tempExtractRaw +
-                ", SupplyRPM=" + supplyRpm + ", SupplyDuty=" + supplyDuty + ", ExtractRPM=" + extractRpm);
-
             checkBoostLogic(humidity, historicalHumidityAverage);
 
             int tempSensorOffsetRaw = Integer.parseInt(System.getenv().getOrDefault("TEMP_SUPPLY_OFFSET_RAW", "-300"));
@@ -490,6 +579,19 @@ public class HumidityMonitor {
             updateFanSpeed(humidity, tempSupply, tempOutside, tempExtract, observedFanSpeed, supplyDuty,
                     isDefrosting);
 
+            int bypassState = -1;
+            try {
+                bypassState = normalizeBypassState(client.readDatapoint(53));
+            } catch (IOException e) {
+                logError("Bypass status unavailable: " + e.getMessage());
+            }
+
+            log("Polled Data: Humidity=" + humidity + "%, SupplyTempRaw=" + tempSupplyRaw
+                + ", OutsideTempRaw=" + tempOutsideRaw + ", ExhaustTempRaw=" + tempExhaustRaw
+                + ", ExtractTempRaw=" + tempExtractRaw
+                + ", SupplyRPM=" + supplyRpm + ", SupplyDuty=" + supplyDuty + ", ExtractRPM=" + extractRpm
+                + ", Bypass=" + bypassStateLabel(bypassState));
+
             lastHumidity = humidity;
             lastHumidityTime = System.currentTimeMillis();
             lastSupplyTemp = tempSupply;
@@ -497,10 +599,11 @@ public class HumidityMonitor {
             lastExhaustTemp = tempExhaust;
             lastExtractTemp = tempExtract;
             lastRpm = supplyRpm;
-                lastObservedFanSpeed = observedFanSpeed;
+            lastBypassState = bypassState;
+            lastObservedFanSpeed = observedFanSpeed;
 
             return new PollResult(humidity, tempSupply, tempOutside, tempExhaust, tempExtract, supplyRpm,
-                    observedFanSpeed, boostActive, isDefrosting);
+                    observedFanSpeed, bypassState, boostActive, isDefrosting);
 
         } catch (Exception e) {
             logError("Error polling data: " + e.getMessage());
@@ -512,7 +615,37 @@ public class HumidityMonitor {
     }
 
     private record PollResult(int humidity, double tempSupply, double tempOutside, double tempExhaust,
-            double tempExtract, int supplyRpm, int observedFanSpeed, boolean boostActive, boolean defrosting) {}
+            double tempExtract, int supplyRpm, int observedFanSpeed, int bypassState, boolean boostActive,
+            boolean defrosting) {}
+
+    private ControlState controlStateSnapshot() {
+        synchronized (clientLock) {
+            return new ControlState(boostActive, boostBaselineHumidity, boostMinEndTime, boostEndTime,
+                    humidityRiseCandidateBaseline);
+        }
+    }
+
+    private void restoreControlState(ControlState state) {
+        boostActive = BOOST_ENABLED && !monitorOnly && state.boostActive()
+            && Double.isFinite(state.boostBaseline());
+        boostBaselineHumidity = boostActive ? state.boostBaseline() : Double.NaN;
+        boostMinEndTime = boostActive ? state.boostMinEnd() : 0;
+        boostEndTime = boostActive ? state.boostEnd() : 0;
+        humidityRiseCandidateBaseline = BOOST_ENABLED && !monitorOnly
+            ? state.riseCandidate() : Double.NaN;
+        if (boostActive) {
+            log(String.format(Locale.ROOT,
+                    "Restored humidity recovery toward %.1f%% after restart.", boostBaselineHumidity));
+        }
+    }
+
+    private void persistControlState(ControlState state) {
+        try (Connection connection = DriverManager.getConnection(DB_URL)) {
+            saveControlState(connection, state);
+        } catch (SQLException e) {
+            logError("Failed to persist humidity recovery state: " + e.getMessage());
+        }
+    }
 
     private void publishHomeAssistant(PollResult result) {
         if (System.getenv("SUPERVISOR_TOKEN") == null) {
@@ -530,7 +663,7 @@ public class HumidityMonitor {
                     while ((result = pendingHomeAssistantResult.getAndSet(null)) != null) {
                         updateHomeAssistant(result.humidity(), result.tempSupply(), result.tempOutside(),
                             result.tempExhaust(), result.tempExtract(), result.supplyRpm(),
-                            result.observedFanSpeed());
+                            result.observedFanSpeed(), result.bypassState());
                     }
                 } finally {
                     homeAssistantPublishRunning.set(false);
@@ -556,7 +689,7 @@ public class HumidityMonitor {
     }
 
     private void updateHomeAssistant(int humidity, double tempSupply, double tempOutside, double tempExhaust,
-            double tempExtract, int rpm, int speed) {
+            double tempExtract, int rpm, int speed, int bypassState) {
         String token = System.getenv("SUPERVISOR_TOKEN");
         if (token == null) return;
 
@@ -567,6 +700,7 @@ public class HumidityMonitor {
         sendTemperatureToHA("sensor.genvex_temp_extract", tempExtract, token);
         sendToHA("sensor.genvex_fan_rpm", String.valueOf(rpm), "rpm", null, token);
         sendToHA("sensor.genvex_fan_speed", String.valueOf(speed), null, null, token);
+        sendToHA("sensor.genvex_bypass", bypassStateLabel(bypassState), null, null, token);
     }
 
     private void sendTemperatureToHA(String entityId, double temperature, String token) {
@@ -639,15 +773,18 @@ public class HumidityMonitor {
             targetSpeed = staticRpmSpeed;
             reason = "Static RPM Mode";
         } else if (boostActive) {
-            resetEveningCooling();
-            targetSpeed = selectBoostRecoverySpeed(humidity, boostBaselineHumidity,
+            LocalTime now = LocalTime.now();
+            int coolingSpeed = selectEveningCoolingSpeed(tempSupply, tempOutside, tempExtract, now);
+            targetSpeed = selectCombinedRecoverySpeed(humidity, boostBaselineHumidity,
                 HUMIDITY_RISE_THRESHOLD, BOOST_SPEED, NORMAL_SPEED,
-                HUMIDITY_LOW_THRESHOLD, HUMIDITY_HIGH_THRESHOLD, HUMIDITY_VERY_HIGH_THRESHOLD);
+                HUMIDITY_LOW_THRESHOLD, HUMIDITY_HIGH_THRESHOLD, HUMIDITY_VERY_HIGH_THRESHOLD,
+                coolingSpeed);
             if (System.currentTimeMillis() < boostMinEndTime) {
                 targetSpeed = Math.max(targetSpeed, Math.min(2, BOOST_SPEED));
             }
-            reason = String.format(Locale.ROOT, "Humidity Recovery (delta %.1f%%)",
-                    humidity - boostBaselineHumidity);
+            reason = String.format(Locale.ROOT, coolingSpeed > 0
+                    ? "Humidity Recovery + Evening Cooling (delta %.1f%%)"
+                    : "Humidity Recovery (delta %.1f%%)", humidity - boostBaselineHumidity);
         } else {
             LocalTime now = LocalTime.now();
             boolean isNightTime = isNight(now);
@@ -747,6 +884,26 @@ public class HumidityMonitor {
                 ? Math.max(3, normalSpeed)
                 : selectHumiditySpeed(humidity, lowThreshold, highThreshold, normalSpeed);
         return Math.max(dynamicSpeed, absoluteHumiditySpeed);
+    }
+
+    static int selectCombinedRecoverySpeed(int humidity, double baselineHumidity, int riseThreshold,
+            int maxBoostSpeed, int normalSpeed, int lowThreshold, int highThreshold,
+            int veryHighThreshold, int coolingSpeed) {
+        return Math.max(coolingSpeed, selectBoostRecoverySpeed(humidity, baselineHumidity, riseThreshold,
+                maxBoostSpeed, normalSpeed, lowThreshold, highThreshold, veryHighThreshold));
+    }
+
+    static double updateHumidityRiseCandidate(double candidateBaseline, int previousHumidity,
+            int currentHumidity, double historicalAverage) {
+        if (Double.isFinite(candidateBaseline)) {
+            return currentHumidity <= candidateBaseline
+                    ? Double.NaN : candidateBaseline;
+        }
+        if (currentHumidity > previousHumidity) {
+            return Double.isFinite(historicalAverage)
+                    ? Math.min(previousHumidity, historicalAverage) : previousHumidity;
+        }
+        return Double.NaN;
     }
 
     static boolean hasHumidityRise(int humidity, double baselineHumidity, int riseThreshold) {
@@ -921,6 +1078,7 @@ public class HumidityMonitor {
                                 resetEveningCooling();
                             }
                         }
+                        persistControlState(controlStateSnapshot());
                         log("System Monitor Mode updated to: " + monitorOnly);
                         sendJson(t, "{\"status\": \"ok\", \"monitor_only\": " + monitorOnly + "}");
                      } else {
@@ -964,16 +1122,20 @@ public class HumidityMonitor {
                 return;
             }
 
-            double baselineHumidity = Double.isFinite(historicalHumidityAverage)
-                    ? historicalHumidityAverage : lastHumidity;
+                humidityRiseCandidateBaseline = updateHumidityRiseCandidate(humidityRiseCandidateBaseline,
+                        lastHumidity, currentHumidity, historicalHumidityAverage);
+                double baselineHumidity = Double.isFinite(humidityRiseCandidateBaseline)
+                    ? humidityRiseCandidateBaseline
+                    : Double.isFinite(historicalHumidityAverage) ? historicalHumidityAverage : lastHumidity;
             if (hasHumidityRise(currentHumidity, baselineHumidity, HUMIDITY_RISE_THRESHOLD)) {
                 log(String.format(Locale.ROOT,
                         "Humidity rise detected (%d%% current, historical average %.1f%%). Activating recovery.",
                         currentHumidity, baselineHumidity));
                 activateBoost(currentHumidity, baselineHumidity);
+                humidityRiseCandidateBaseline = Double.NaN;
             }
         } else {
-            if (shouldDeactivateBoost(now, boostMinEndTime, currentHumidity,
+            if (shouldDeactivateBoost(now, boostEndTime, currentHumidity,
                     boostBaselineHumidity, HUMIDITY_RECOVERY_TOLERANCE)) {
                 log(String.format(Locale.ROOT,
                         "Humidity recovered (%d%%, historical average %.1f%%). Deactivating Boost.",
@@ -1009,6 +1171,7 @@ public class HumidityMonitor {
         boostActive = false;
         boostBaselineHumidity = Double.NaN;
         boostExtensionLogged = false;
+        humidityRiseCandidateBaseline = Double.NaN;
         // Speed change will be handled by updateFanSpeed()
     }
 
@@ -1117,6 +1280,7 @@ public class HumidityMonitor {
                         staticRpmMode = requestedEnabled;
                         staticRpmSpeed = requestedSpeed;
                     }
+                    persistControlState(controlStateSnapshot());
                 } catch (Exception e) {
                     logError("Failed to set fan speed for Static Mode: " + e.getMessage());
                     sendError(t, 502, "Genvex did not acknowledge the fan speed command");
@@ -1130,9 +1294,9 @@ public class HumidityMonitor {
     }
 
     private boolean saveToDatabase(int humidity, double tempSupply, double tempOutside, double tempExhaust,
-            double tempExtract, int rpm, int fanSpeed) {
+            double tempExtract, int rpm, int fanSpeed, int bypassState) {
         String sql = "INSERT INTO humidity_readings (humidity, temp_supply, temp_outside, temp_exhaust, " +
-                     "temp_extract, fan_rpm, fan_speed_level) VALUES (?, ?, ?, ?, ?, ?, ?)";
+                     "temp_extract, fan_rpm, fan_speed_level, bypass_open) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
 
         try (Connection conn = DriverManager.getConnection(DB_URL);
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -1144,6 +1308,7 @@ public class HumidityMonitor {
             setNullableDouble(pstmt, 5, tempExtract);
             pstmt.setInt(6, rpm);
             pstmt.setInt(7, fanSpeed);
+            setNullableInteger(pstmt, 8, bypassState);
             pstmt.executeUpdate();
             
             if (dbErrorCount > 0) {
@@ -1169,6 +1334,26 @@ public class HumidityMonitor {
         } else {
             pstmt.setNull(parameterIndex, java.sql.Types.REAL);
         }
+    }
+
+    private static void setNullableInteger(PreparedStatement pstmt, int parameterIndex, int value) throws SQLException {
+        if (value >= 0) {
+            pstmt.setInt(parameterIndex, value);
+        } else {
+            pstmt.setNull(parameterIndex, java.sql.Types.INTEGER);
+        }
+    }
+
+    static int normalizeBypassState(int rawValue) {
+        return rawValue < 0 ? -1 : rawValue == 0 ? 0 : 1;
+    }
+
+    static String jsonBypassState(int bypassState) {
+        return bypassState < 0 ? "null" : String.valueOf(bypassState == 1);
+    }
+
+    private static String bypassStateLabel(int bypassState) {
+        return bypassState < 0 ? "unknown" : bypassState == 1 ? "open" : "closed";
     }
 
     private void cleanupOldData() {
