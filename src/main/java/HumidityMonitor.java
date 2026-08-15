@@ -870,7 +870,7 @@ public class HumidityMonitor {
             return Math.max(normalSpeed, Math.min(2, maxBoostSpeed));
         }
         if (delta < riseThreshold * 2.0) {
-            return Math.max(normalSpeed, Math.min(3, maxBoostSpeed));
+            return Math.max(normalSpeed, Math.min(2, maxBoostSpeed));
         }
         return Math.max(normalSpeed, maxBoostSpeed);
     }

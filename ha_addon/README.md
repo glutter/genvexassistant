@@ -36,7 +36,7 @@ Before starting, configure the add-on in the **Configuration** tab:
 **Optional Settings:**
 - `poll_interval`: How often to read data in seconds (default: 30).
 - `boost_enabled`: Enable/Disable automatic fan boost on humidity rise.
-- `humidity_rise_threshold`: Percentage rise in humidity to trigger boost (default: 4).
+- `humidity_rise_threshold`: Percentage-point rise that triggers recovery on speed 2; twice this delta permits the configured boost speed (default: 4).
 - `boost_speed`: Ceiling for delta-driven recovery speed; absolute high-humidity protection may demand more (default: 3).
 - `normal_speed`: Fan speed level between the low and high humidity thresholds (default: 1).
 - `monitor_only`: Disable automatic fan writes for passive monitoring (default: false).

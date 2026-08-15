@@ -56,14 +56,16 @@ class HumidityControlPolicyTest {
     void boostSpeedTracksHumidityDeltaAboveHistoricalBaseline() {
         assertEquals(1, HumidityMonitor.selectDynamicBoostSpeed(46, 45.0, 4, 3, 1));
         assertEquals(2, HumidityMonitor.selectDynamicBoostSpeed(47, 45.0, 4, 3, 1));
-        assertEquals(3, HumidityMonitor.selectDynamicBoostSpeed(49, 45.0, 4, 3, 1));
+        assertEquals(2, HumidityMonitor.selectDynamicBoostSpeed(49, 45.0, 4, 3, 1));
+        assertEquals(2, HumidityMonitor.selectDynamicBoostSpeed(52, 45.0, 4, 3, 1));
+        assertEquals(3, HumidityMonitor.selectDynamicBoostSpeed(53, 45.0, 4, 3, 1));
         assertEquals(4, HumidityMonitor.selectDynamicBoostSpeed(53, 45.0, 4, 4, 1));
     }
 
     @Test
     void historicalDeltaDetectsAGradualRiseAndOverridesNightSpeed() {
         assertTrue(HumidityMonitor.hasHumidityRise(49, 45.0, 4));
-        assertEquals(3, HumidityMonitor.selectBoostRecoverySpeed(49, 45.0, 4, 3,
+        assertEquals(2, HumidityMonitor.selectBoostRecoverySpeed(49, 45.0, 4, 3,
                 1, 30, 65, 80));
     }
 
@@ -107,7 +109,7 @@ class HumidityControlPolicyTest {
         void recoveryNeverLowersAnActiveCoolingTarget() {
         assertEquals(3, HumidityMonitor.selectCombinedRecoverySpeed(47, 45.0, 4, 3,
             1, 30, 65, 80, 3));
-        assertEquals(3, HumidityMonitor.selectCombinedRecoverySpeed(49, 45.0, 4, 3,
+        assertEquals(2, HumidityMonitor.selectCombinedRecoverySpeed(49, 45.0, 4, 3,
             1, 30, 65, 80, 2));
         }
 
