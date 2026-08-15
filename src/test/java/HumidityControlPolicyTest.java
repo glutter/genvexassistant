@@ -64,7 +64,8 @@ class HumidityControlPolicyTest {
 
     @Test
     void historicalDeltaDetectsAGradualRiseAndOverridesNightSpeed() {
-        assertTrue(HumidityMonitor.hasHumidityRise(49, 45.0, 4));
+        assertFalse(HumidityMonitor.hasHumidityRise(49, 45.0, 4));
+        assertTrue(HumidityMonitor.hasHumidityRise(50, 45.0, 4));
         assertEquals(2, HumidityMonitor.selectBoostRecoverySpeed(49, 45.0, 4, 3,
                 1, 30, 65, 80));
     }
@@ -94,15 +95,16 @@ class HumidityControlPolicyTest {
     }
 
     @Test
-    void boostContinuesPastInitialDurationUntilHistoricalBaselineIsRecovered() {
+    void boostStopsAtRiseThresholdInsteadOfHistoricalBaseline() {
         long initialDurationEnd = 15 * 60 * 1000L;
 
         assertFalse(HumidityMonitor.shouldDeactivateBoost(10 * 60 * 1000L, initialDurationEnd,
-            45, 45.0, 1));
+            45, 45.0, 4, 1));
         assertFalse(HumidityMonitor.shouldDeactivateBoost(initialDurationEnd + 1, initialDurationEnd,
-                52, 45.0, 1));
+                50, 45.0, 4, 1));
         assertTrue(HumidityMonitor.shouldDeactivateBoost(initialDurationEnd + 1, initialDurationEnd,
-                46, 45.0, 1));
+                49, 45.0, 4, 1));
+        assertEquals(50.0, HumidityMonitor.humidityRecoveryTarget(46.0, 4, 1));
         }
 
         @Test
@@ -114,20 +116,26 @@ class HumidityControlPolicyTest {
         }
 
         @Test
-        void candidateBaselineStaysFixedDuringGradualRise() {
+        void candidateBaselineFollowsAverageDuringGradualRise() {
         double candidate = Double.NaN;
         candidate = HumidityMonitor.updateHumidityRiseCandidate(candidate, 45, 46, 45.0);
         assertEquals(45.0, candidate);
         candidate = HumidityMonitor.updateHumidityRiseCandidate(candidate, 46, 46, 45.1);
-        assertEquals(45.0, candidate);
+        assertEquals(45.1, candidate);
         candidate = HumidityMonitor.updateHumidityRiseCandidate(candidate, 46, 47, 45.2);
-        assertEquals(45.0, candidate);
+        assertEquals(45.2, candidate);
         candidate = HumidityMonitor.updateHumidityRiseCandidate(candidate, 47, 48, 45.5);
-        assertEquals(45.0, candidate);
+        assertEquals(45.5, candidate);
         candidate = HumidityMonitor.updateHumidityRiseCandidate(candidate, 48, 49, 46.0);
-        assertEquals(45.0, candidate);
-        assertTrue(HumidityMonitor.hasHumidityRise(49, candidate, 4));
+        assertEquals(46.0, candidate);
+        assertFalse(HumidityMonitor.hasHumidityRise(49, candidate, 4));
         assertTrue(Double.isNaN(HumidityMonitor.updateHumidityRiseCandidate(candidate, 49, 45, 46.0)));
+    }
+
+    @Test
+    void exactThresholdDriftDoesNotStartRecovery() {
+        assertFalse(HumidityMonitor.hasHumidityRise(50, 46.0, 4));
+        assertTrue(HumidityMonitor.hasHumidityRise(51, 46.0, 4));
     }
 
     @Test

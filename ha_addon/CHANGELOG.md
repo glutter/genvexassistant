@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.53
+
+- Prevented normal humidity drift from triggering recovery at the exact configured rise threshold.
+- Let the candidate baseline follow the historical average during gradual changes instead of remaining fixed at a stale low value.
+- Stop recovery once humidity returns to the rise-threshold boundary, avoiding unnecessary ventilation toward the original baseline; the dashboard now reports this less aggressive target.
+
 ## 1.52
 
 - Adjusted the dynamic humidity-boost recovery speed logic to smooth out fan speed shifts, keeping it at speed 2 if the humidity delta is less than twice the rise threshold.
