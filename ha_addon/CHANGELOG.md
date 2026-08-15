@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.52
+
+- Adjusted the dynamic humidity-boost recovery speed logic to smooth out fan speed shifts, keeping it at speed 2 if the humidity delta is less than twice the rise threshold.
+- Updated documentation in the Home Assistant add-on's configuration interface to match the updated recovery-speed delta behavior.
+
 ## 1.51
 
 - Added verified read-only bypass status from datapoint 53 to live telemetry, SQLite history, and time-bucketed history responses.
