@@ -12,6 +12,9 @@ import java.time.Instant;
 import org.junit.jupiter.api.Test;
 
 class HumidityControlPolicyTest {
+    private static final HumidityMonitor.HumidityPolicy DEFAULT_POLICY =
+            new HumidityMonitor.HumidityPolicy(4, 1, 3, 1, 30, 65, 80);
+
     @Test
     void usesLowSpeedAtAndBelowLowThreshold() {
         assertEquals(1, HumidityMonitor.selectHumiditySpeed(29, 30, 65, 3));
@@ -53,29 +56,29 @@ class HumidityControlPolicyTest {
     }
 
     @Test
-    void boostSpeedTracksHumidityDeltaAboveHistoricalBaseline() {
-        assertEquals(1, HumidityMonitor.selectDynamicBoostSpeed(46, 45.0, 4, 3, 1));
-        assertEquals(2, HumidityMonitor.selectDynamicBoostSpeed(47, 45.0, 4, 3, 1));
-        assertEquals(2, HumidityMonitor.selectDynamicBoostSpeed(49, 45.0, 4, 3, 1));
-        assertEquals(2, HumidityMonitor.selectDynamicBoostSpeed(52, 45.0, 4, 3, 1));
-        assertEquals(3, HumidityMonitor.selectDynamicBoostSpeed(53, 45.0, 4, 3, 1));
-        assertEquals(4, HumidityMonitor.selectDynamicBoostSpeed(53, 45.0, 4, 4, 1));
+        void humidityPhasesHavePredictableSpeeds() {
+        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(60, 50.0,
+            DEFAULT_POLICY, 0, HumidityMonitor.HumidityRecoveryPhase.BOOST));
+        assertEquals(2, HumidityMonitor.selectHumidityRecoverySpeed(60, 50.0,
+            DEFAULT_POLICY, 0, HumidityMonitor.HumidityRecoveryPhase.RECOVERY));
+        assertEquals(1, HumidityMonitor.selectHumidityRecoverySpeed(53, 50.0,
+            DEFAULT_POLICY, 0, HumidityMonitor.HumidityRecoveryPhase.RECOVERY));
     }
 
     @Test
-    void historicalDeltaDetectsAGradualRiseAndOverridesNightSpeed() {
-        assertFalse(HumidityMonitor.hasHumidityRise(49, 45.0, 4));
-        assertTrue(HumidityMonitor.hasHumidityRise(50, 45.0, 4));
-        assertEquals(2, HumidityMonitor.selectBoostRecoverySpeed(49, 45.0, 4, 3,
-                1, 30, 65, 80));
+    void configuredDeltaTriggersAtTheBoundary() {
+        assertFalse(HumidityMonitor.hasHumidityRise(48, 45.0, DEFAULT_POLICY));
+        assertTrue(HumidityMonitor.hasHumidityRise(49, 45.0, DEFAULT_POLICY));
     }
 
     @Test
     void recoveryNeverUndercutsAbsoluteHumidityProtection() {
-        assertEquals(2, HumidityMonitor.selectBoostRecoverySpeed(65, 64.0, 4, 3,
-                1, 30, 65, 80));
-        assertEquals(3, HumidityMonitor.selectBoostRecoverySpeed(80, 78.0, 4, 2,
-                1, 30, 65, 80));
+        assertEquals(2, HumidityMonitor.selectHumidityRecoverySpeed(65, 64.0,
+            DEFAULT_POLICY, 0, HumidityMonitor.HumidityRecoveryPhase.RECOVERY));
+        HumidityMonitor.HumidityPolicy limitedBoost =
+            new HumidityMonitor.HumidityPolicy(4, 1, 2, 1, 30, 65, 80);
+        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(80, 78.0,
+            limitedBoost, 0, HumidityMonitor.HumidityRecoveryPhase.RECOVERY));
     }
 
     @Test
@@ -99,43 +102,27 @@ class HumidityControlPolicyTest {
         long initialDurationEnd = 15 * 60 * 1000L;
 
         assertFalse(HumidityMonitor.shouldDeactivateBoost(10 * 60 * 1000L, initialDurationEnd,
-            45, 45.0, 4, 1));
+            45, 45.0, DEFAULT_POLICY));
         assertFalse(HumidityMonitor.shouldDeactivateBoost(initialDurationEnd + 1, initialDurationEnd,
-                50, 45.0, 4, 1));
+            50, 45.0, DEFAULT_POLICY));
         assertTrue(HumidityMonitor.shouldDeactivateBoost(initialDurationEnd + 1, initialDurationEnd,
-                49, 45.0, 4, 1));
-        assertEquals(50.0, HumidityMonitor.humidityRecoveryTarget(46.0, 4, 1));
+            48, 45.0, DEFAULT_POLICY));
+        assertEquals(49.0, HumidityMonitor.humidityRecoveryTarget(46.0, DEFAULT_POLICY));
         }
-
-        @Test
-        void recoveryNeverLowersAnActiveCoolingTarget() {
-        assertEquals(3, HumidityMonitor.selectCombinedRecoverySpeed(47, 45.0, 4, 3,
-            1, 30, 65, 80, 3));
-        assertEquals(2, HumidityMonitor.selectCombinedRecoverySpeed(49, 45.0, 4, 3,
-            1, 30, 65, 80, 2));
-        }
-
-        @Test
-        void candidateBaselineFollowsAverageDuringGradualRise() {
-        double candidate = Double.NaN;
-        candidate = HumidityMonitor.updateHumidityRiseCandidate(candidate, 45, 46, 45.0);
-        assertEquals(45.0, candidate);
-        candidate = HumidityMonitor.updateHumidityRiseCandidate(candidate, 46, 46, 45.1);
-        assertEquals(45.1, candidate);
-        candidate = HumidityMonitor.updateHumidityRiseCandidate(candidate, 46, 47, 45.2);
-        assertEquals(45.2, candidate);
-        candidate = HumidityMonitor.updateHumidityRiseCandidate(candidate, 47, 48, 45.5);
-        assertEquals(45.5, candidate);
-        candidate = HumidityMonitor.updateHumidityRiseCandidate(candidate, 48, 49, 46.0);
-        assertEquals(46.0, candidate);
-        assertFalse(HumidityMonitor.hasHumidityRise(49, candidate, 4));
-        assertTrue(Double.isNaN(HumidityMonitor.updateHumidityRiseCandidate(candidate, 49, 45, 46.0)));
-    }
 
     @Test
-    void exactThresholdDriftDoesNotStartRecovery() {
-        assertFalse(HumidityMonitor.hasHumidityRise(50, 46.0, 4));
-        assertTrue(HumidityMonitor.hasHumidityRise(51, 46.0, 4));
+    void recoveryNeverLowersAnActiveCoolingTarget() {
+        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(47, 45.0,
+            DEFAULT_POLICY, 3, HumidityMonitor.HumidityRecoveryPhase.RECOVERY));
+        assertEquals(2, HumidityMonitor.selectHumidityRecoverySpeed(49, 45.0,
+            DEFAULT_POLICY, 2, HumidityMonitor.HumidityRecoveryPhase.RECOVERY));
+        }
+
+    @Test
+    void stableHumidityDoesNotStartRecoveryButASpikeDoes() {
+        assertFalse(HumidityMonitor.hasHumidityRise(50, 50.0, DEFAULT_POLICY));
+        assertTrue(HumidityMonitor.hasHumidityRise(54, 50.0, DEFAULT_POLICY));
+        assertTrue(HumidityMonitor.hasHumidityRise(60, 50.0, DEFAULT_POLICY));
     }
 
     @Test
@@ -143,7 +130,7 @@ class HumidityControlPolicyTest {
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:")) {
             HumidityMonitor.ensureControlStateTable(connection);
             HumidityMonitor.ControlState expected = new HumidityMonitor.ControlState(
-                    true, 45.0, 1_000L, 2_000L, 44.5);
+                    true, 45.0, 2_000L);
 
             HumidityMonitor.saveControlState(connection, expected);
             HumidityMonitor.ControlState restored = HumidityMonitor.loadControlState(connection);
@@ -178,4 +165,12 @@ class HumidityControlPolicyTest {
             HumidityMonitor.validateControlConfiguration(4, 30, 1, 15 * 60_000L,
                 3, 1, 65, 30, 80));
         }
+
+    @Test
+    void legacyToleranceAboveRiseThresholdIsCapped() {
+        HumidityMonitor.HumidityPolicy legacyPolicy =
+                new HumidityMonitor.HumidityPolicy(4, 5, 3, 1, 30, 65, 80);
+
+        assertEquals(46.0, HumidityMonitor.humidityRecoveryTarget(46.0, legacyPolicy));
+    }
 }

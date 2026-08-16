@@ -36,13 +36,13 @@ Before starting, configure the add-on in the **Configuration** tab:
 **Optional Settings:**
 - `poll_interval`: How often to read data in seconds (default: 30).
 - `boost_enabled`: Enable/Disable automatic fan boost on humidity rise.
-- `humidity_rise_threshold`: Percentage-point rise that triggers recovery on speed 2; twice this delta permits the configured boost speed (default: 4).
-- `boost_speed`: Ceiling for delta-driven recovery speed; absolute high-humidity protection may demand more (default: 3).
+- `humidity_rise_threshold`: Rise above the rolling historical average that starts a humidity boost (default: 4 percentage points).
+- `boost_speed`: Fan speed used during the initial confirmed-spike phase; recovery subsequently uses at most speed 2 unless absolute humidity protection or cooling requires more (default: 3).
 - `normal_speed`: Fan speed level between the low and high humidity thresholds (default: 1).
 - `monitor_only`: Disable automatic fan writes for passive monitoring (default: false).
-- `boost_duration_minutes`: Initial boost window; recovery continues afterward while humidity remains elevated (default: 15).
-- `humidity_baseline_minutes`: Historical window used to calculate pre-rise average humidity (default: 30).
-- `humidity_recovery_tolerance`: Minimum allowed delta above the historical average when recovery ends; the rise threshold is used when it is higher (default: 1).
+- `boost_duration_minutes`: Duration of the full-speed BOOST phase; speed-2 RECOVERY continues afterward while humidity remains elevated (default: 15).
+- `humidity_baseline_minutes`: Historical window used to calculate the rolling humidity baseline (default: 30).
+- `humidity_recovery_tolerance`: Hysteresis below the rise threshold before recovery ends. With defaults, boost starts at baseline +4 and recovery ends at baseline +3; larger legacy values are capped at the rise threshold (default: 1).
 - `humidity_high_threshold`: Humidity level to trigger high speed (default: 65).
 - `humidity_low_threshold`: Humidity level at or below which speed 1 is used (default: 30).
 - `night_start`: Start time for night mode (HH:mm, default: 22:00).

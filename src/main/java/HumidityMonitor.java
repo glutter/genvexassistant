@@ -50,7 +50,7 @@ public class HumidityMonitor {
 
     // Boost Configuration
     private static final boolean BOOST_ENABLED = Boolean.parseBoolean(System.getenv().getOrDefault("BOOST_ENABLED", "true"));
-    private static final int HUMIDITY_RISE_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_RISE_THRESHOLD", "4")); // % rise per poll
+    private static final int HUMIDITY_RISE_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_RISE_THRESHOLD", "4"));
     private static final int BOOST_SPEED = Integer.parseInt(System.getenv().getOrDefault("BOOST_SPEED", "3"));
     private static final int NORMAL_SPEED = Integer.parseInt(System.getenv().getOrDefault("NORMAL_SPEED", "1"));
     private static final long BOOST_DURATION_MS = Integer.parseInt(System.getenv().getOrDefault("BOOST_DURATION_MINUTES", "15")) * 60 * 1000L;
@@ -61,6 +61,9 @@ public class HumidityMonitor {
     private static final int HUMIDITY_VERY_HIGH_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_VERY_HIGH_THRESHOLD", "80"));
     private static final int HUMIDITY_HIGH_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_HIGH_THRESHOLD", "65"));
     private static final int HUMIDITY_LOW_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_LOW_THRESHOLD", "30"));
+        private static final HumidityPolicy HUMIDITY_POLICY = new HumidityPolicy(
+            HUMIDITY_RISE_THRESHOLD, HUMIDITY_RECOVERY_TOLERANCE, BOOST_SPEED, NORMAL_SPEED,
+            HUMIDITY_LOW_THRESHOLD, HUMIDITY_HIGH_THRESHOLD, HUMIDITY_VERY_HIGH_THRESHOLD);
     private static final LocalTime NIGHT_START = LocalTime.parse(System.getenv().getOrDefault("NIGHT_START", "22:00"));
     private static final LocalTime NIGHT_END = LocalTime.parse(System.getenv().getOrDefault("NIGHT_END", "06:30"));
 
@@ -87,10 +90,8 @@ public class HumidityMonitor {
     private int lastBypassState = -1;
     private boolean boostActive = false;
     private long boostEndTime = 0;
-    private long boostMinEndTime = 0; // Minimum boost duration before allowing deactivation
     private double boostBaselineHumidity = Double.NaN;
     private boolean boostExtensionLogged = false;
-    private double humidityRiseCandidateBaseline = Double.NaN;
     private int commandedFanSpeed = -1;
     private int lastObservedFanSpeed = -1;
     private int dbErrorCount = 0;
@@ -215,13 +216,12 @@ public class HumidityMonitor {
 
     static void saveControlState(Connection connection, ControlState state) throws SQLException {
         String sql = "UPDATE control_state SET boost_active = ?, boost_baseline = ?, "
-                + "boost_min_end = ?, boost_end = ?, rise_candidate = ? WHERE id = 1";
+                + "boost_min_end = ?, boost_end = ?, rise_candidate = NULL WHERE id = 1";
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setInt(1, state.boostActive() ? 1 : 0);
             setNullableDouble(statement, 2, state.boostBaseline());
-            statement.setLong(3, state.boostMinEnd());
+            statement.setLong(3, state.boostEnd());
             statement.setLong(4, state.boostEnd());
-            setNullableDouble(statement, 5, state.riseCandidate());
             statement.executeUpdate();
         }
     }
@@ -229,23 +229,19 @@ public class HumidityMonitor {
     static ControlState loadControlState(Connection connection) throws SQLException {
         try (Statement statement = connection.createStatement();
              ResultSet result = statement.executeQuery("SELECT boost_active, boost_baseline, "
-                     + "boost_min_end, boost_end, rise_candidate FROM control_state WHERE id = 1")) {
+                     + "boost_min_end, boost_end FROM control_state WHERE id = 1")) {
             if (result.next()) {
                 boolean active = result.getInt("boost_active") == 1;
                 double baseline = result.getDouble("boost_baseline");
                 if (result.wasNull()) baseline = Double.NaN;
-                long minimumEnd = result.getLong("boost_min_end");
                 long end = result.getLong("boost_end");
-                double candidate = result.getDouble("rise_candidate");
-                if (result.wasNull()) candidate = Double.NaN;
-                return new ControlState(active, baseline, minimumEnd, end, candidate);
+                return new ControlState(active, baseline, end);
             }
         }
-        return new ControlState(false, Double.NaN, 0, 0, Double.NaN);
+        return new ControlState(false, Double.NaN, 0);
     }
 
-    static record ControlState(boolean boostActive, double boostBaseline, long boostMinEnd,
-            long boostEnd, double riseCandidate) {}
+    static record ControlState(boolean boostActive, double boostBaseline, long boostEnd) {}
 
     private static void addColumnIfMissing(Connection conn, String columnName, String columnType) throws SQLException {
         try (Statement stmt = conn.createStatement();
@@ -321,8 +317,7 @@ public class HumidityMonitor {
                 snapshot = new LiveSnapshot(lastHumidity, lastSupplyTemp, lastOutsideTemp, lastExhaustTemp,
                     lastExtractTemp, lastRpm, lastBypassState, lastObservedFanSpeed, commandedFanSpeed,
                     boostActive,
-                    humidityRecoveryTarget(boostBaselineHumidity, HUMIDITY_RISE_THRESHOLD,
-                            HUMIDITY_RECOVERY_TOLERANCE),
+                        humidityRecoveryTarget(boostBaselineHumidity, HUMIDITY_POLICY),
                     boostActive && now >= boostEndTime,
                         eveningCoolingActive, eveningCoolingSpeed, staticRpmMode, staticRpmSpeed, monitorOnly,
                         manualOverrideActive && now < manualOverrideEndTime,
@@ -621,8 +616,7 @@ public class HumidityMonitor {
 
     private ControlState controlStateSnapshot() {
         synchronized (clientLock) {
-            return new ControlState(boostActive, boostBaselineHumidity, boostMinEndTime, boostEndTime,
-                    humidityRiseCandidateBaseline);
+            return new ControlState(boostActive, boostBaselineHumidity, boostEndTime);
         }
     }
 
@@ -630,13 +624,11 @@ public class HumidityMonitor {
         boostActive = BOOST_ENABLED && !monitorOnly && state.boostActive()
             && Double.isFinite(state.boostBaseline());
         boostBaselineHumidity = boostActive ? state.boostBaseline() : Double.NaN;
-        boostMinEndTime = boostActive ? state.boostMinEnd() : 0;
         boostEndTime = boostActive ? state.boostEnd() : 0;
-        humidityRiseCandidateBaseline = BOOST_ENABLED && !monitorOnly
-            ? state.riseCandidate() : Double.NaN;
         if (boostActive) {
             log(String.format(Locale.ROOT,
-                    "Restored humidity recovery toward %.1f%% after restart.", boostBaselineHumidity));
+                "Restored humidity recovery toward %.1f%% after restart.",
+                    humidityRecoveryTarget(boostBaselineHumidity, HUMIDITY_POLICY)));
         }
     }
 
@@ -776,16 +768,13 @@ public class HumidityMonitor {
         } else if (boostActive) {
             LocalTime now = LocalTime.now();
             int coolingSpeed = selectEveningCoolingSpeed(tempSupply, tempOutside, tempExtract, now);
-            targetSpeed = selectCombinedRecoverySpeed(humidity, boostBaselineHumidity,
-                HUMIDITY_RISE_THRESHOLD, BOOST_SPEED, NORMAL_SPEED,
-                HUMIDITY_LOW_THRESHOLD, HUMIDITY_HIGH_THRESHOLD, HUMIDITY_VERY_HIGH_THRESHOLD,
-                coolingSpeed);
-            if (System.currentTimeMillis() < boostMinEndTime) {
-                targetSpeed = Math.max(targetSpeed, Math.min(2, BOOST_SPEED));
-            }
+                HumidityRecoveryPhase phase = humidityRecoveryPhase(true, System.currentTimeMillis(),
+                    boostEndTime);
+            targetSpeed = selectHumidityRecoverySpeed(humidity, boostBaselineHumidity,
+                        HUMIDITY_POLICY, coolingSpeed, phase);
             reason = String.format(Locale.ROOT, coolingSpeed > 0
-                    ? "Humidity Recovery + Evening Cooling (delta %.1f%%)"
-                    : "Humidity Recovery (delta %.1f%%)", humidity - boostBaselineHumidity);
+                ? "Humidity %s + Evening Cooling (delta %.1f%%)"
+                : "Humidity %s (delta %.1f%%)", phase, humidity - boostBaselineHumidity);
         } else {
             LocalTime now = LocalTime.now();
             boolean isNightTime = isNight(now);
@@ -861,69 +850,53 @@ public class HumidityMonitor {
         return selectHumiditySpeed(humidity, lowThreshold, highThreshold, normalSpeed);
     }
 
-    static int selectDynamicBoostSpeed(int humidity, double baselineHumidity, int riseThreshold,
-            int maxBoostSpeed, int normalSpeed) {
-        double delta = humidity - baselineHumidity;
-        if (delta <= 1.0) {
-            return normalSpeed;
-        }
-        if (delta < riseThreshold) {
-            return Math.max(normalSpeed, Math.min(2, maxBoostSpeed));
-        }
-        if (delta < riseThreshold * 2.0) {
-            return Math.max(normalSpeed, Math.min(2, maxBoostSpeed));
-        }
-        return Math.max(normalSpeed, maxBoostSpeed);
+    enum HumidityRecoveryPhase {
+        INACTIVE,
+        BOOST,
+        RECOVERY
     }
 
-    static int selectBoostRecoverySpeed(int humidity, double baselineHumidity, int riseThreshold,
-            int maxBoostSpeed, int normalSpeed, int lowThreshold, int highThreshold,
-            int veryHighThreshold) {
-        int dynamicSpeed = selectDynamicBoostSpeed(humidity, baselineHumidity, riseThreshold,
-                maxBoostSpeed, normalSpeed);
-        int absoluteHumiditySpeed = humidity >= veryHighThreshold
-                ? Math.max(3, normalSpeed)
-                : selectHumiditySpeed(humidity, lowThreshold, highThreshold, normalSpeed);
-        return Math.max(dynamicSpeed, absoluteHumiditySpeed);
-    }
+    record HumidityPolicy(int riseThreshold, int recoveryTolerance, int boostSpeed,
+            int normalSpeed, int lowThreshold, int highThreshold, int veryHighThreshold) {}
 
-    static int selectCombinedRecoverySpeed(int humidity, double baselineHumidity, int riseThreshold,
-            int maxBoostSpeed, int normalSpeed, int lowThreshold, int highThreshold,
-            int veryHighThreshold, int coolingSpeed) {
-        return Math.max(coolingSpeed, selectBoostRecoverySpeed(humidity, baselineHumidity, riseThreshold,
-                maxBoostSpeed, normalSpeed, lowThreshold, highThreshold, veryHighThreshold));
-    }
-
-    static double updateHumidityRiseCandidate(double candidateBaseline, int previousHumidity,
-            int currentHumidity, double historicalAverage) {
-        if (Double.isFinite(candidateBaseline)) {
-            return currentHumidity <= candidateBaseline
-                ? Double.NaN
-                : Double.isFinite(historicalAverage)
-                    ? Math.max(candidateBaseline, historicalAverage) : candidateBaseline;
+    static HumidityRecoveryPhase humidityRecoveryPhase(boolean active, long now,
+            long boostEndTime) {
+        if (!active) {
+            return HumidityRecoveryPhase.INACTIVE;
         }
-        if (currentHumidity > previousHumidity) {
-            return Double.isFinite(historicalAverage)
-                    ? Math.min(previousHumidity, historicalAverage) : previousHumidity;
-        }
-        return Double.NaN;
+        return now < boostEndTime ? HumidityRecoveryPhase.BOOST : HumidityRecoveryPhase.RECOVERY;
     }
 
-    static boolean hasHumidityRise(int humidity, double baselineHumidity, int riseThreshold) {
+        static int selectHumidityRecoverySpeed(int humidity, double baselineHumidity,
+            HumidityPolicy policy, int coolingSpeed,
+            HumidityRecoveryPhase phase) {
+        int phaseSpeed = phase == HumidityRecoveryPhase.BOOST
+            ? Math.max(policy.normalSpeed(), policy.boostSpeed())
+            : humidity > humidityRecoveryTarget(baselineHumidity, policy)
+                ? Math.max(policy.normalSpeed(), Math.min(2, policy.boostSpeed()))
+                : policy.normalSpeed();
+        int absoluteHumiditySpeed = humidity >= policy.veryHighThreshold()
+            ? Math.max(3, policy.normalSpeed())
+            : selectHumiditySpeed(humidity, policy.lowThreshold(), policy.highThreshold(),
+                policy.normalSpeed());
+        return Math.max(coolingSpeed, Math.max(phaseSpeed, absoluteHumiditySpeed));
+    }
+
+        static boolean hasHumidityRise(int humidity, double baselineHumidity, HumidityPolicy policy) {
         return Double.isFinite(baselineHumidity)
-                && humidity - baselineHumidity > riseThreshold;
+            && humidity - baselineHumidity >= policy.riseThreshold();
     }
 
-    static double humidityRecoveryTarget(double baselineHumidity, int riseThreshold,
-            int recoveryTolerance) {
-        return baselineHumidity + Math.max(riseThreshold, recoveryTolerance);
+        static double humidityRecoveryTarget(double baselineHumidity, HumidityPolicy policy) {
+            int effectiveTolerance = Math.min(policy.recoveryTolerance(), policy.riseThreshold());
+        return baselineHumidity
+                + policy.riseThreshold() - effectiveTolerance;
     }
 
     static boolean shouldDeactivateBoost(long now, long minimumEndTime, int humidity,
-            double baselineHumidity, int riseThreshold, int recoveryTolerance) {
+            double baselineHumidity, HumidityPolicy policy) {
         return now >= minimumEndTime && Double.isFinite(baselineHumidity)
-                && humidity <= humidityRecoveryTarget(baselineHumidity, riseThreshold,
-                        recoveryTolerance);
+            && humidity <= humidityRecoveryTarget(baselineHumidity, policy);
     }
 
     static double historicalHumidityAverage(Connection connection, Instant endExclusive,
@@ -1131,33 +1104,28 @@ public class HumidityMonitor {
                 return;
             }
 
-                humidityRiseCandidateBaseline = updateHumidityRiseCandidate(humidityRiseCandidateBaseline,
-                        lastHumidity, currentHumidity, historicalHumidityAverage);
-                double baselineHumidity = Double.isFinite(humidityRiseCandidateBaseline)
-                    ? humidityRiseCandidateBaseline
-                    : Double.isFinite(historicalHumidityAverage) ? historicalHumidityAverage : lastHumidity;
-            if (hasHumidityRise(currentHumidity, baselineHumidity, HUMIDITY_RISE_THRESHOLD)) {
+                double baselineHumidity = Double.isFinite(historicalHumidityAverage)
+                    ? historicalHumidityAverage : lastHumidity;
+            if (hasHumidityRise(currentHumidity, baselineHumidity, HUMIDITY_POLICY)) {
                 log(String.format(Locale.ROOT,
                         "Humidity rise detected (%d%% current, historical average %.1f%%). Activating recovery.",
                         currentHumidity, baselineHumidity));
                 activateBoost(currentHumidity, baselineHumidity);
-                humidityRiseCandidateBaseline = Double.NaN;
             }
         } else {
             if (shouldDeactivateBoost(now, boostEndTime, currentHumidity,
-                    boostBaselineHumidity, HUMIDITY_RISE_THRESHOLD,
-                    HUMIDITY_RECOVERY_TOLERANCE)) {
+                    boostBaselineHumidity, HUMIDITY_POLICY)) {
                 log(String.format(Locale.ROOT,
                         "Humidity recovered (%d%%, recovery target %.1f%%). Deactivating Boost.",
                         currentHumidity, humidityRecoveryTarget(boostBaselineHumidity,
-                                HUMIDITY_RISE_THRESHOLD, HUMIDITY_RECOVERY_TOLERANCE)));
+                                HUMIDITY_POLICY)));
                 deactivateBoost();
             } else if (now >= boostEndTime && !boostExtensionLogged) {
                 boostExtensionLogged = true;
                 log(String.format(Locale.ROOT,
-                        "Initial boost duration complete; continuing dynamic recovery at %d%% toward %.1f%%.",
-                        currentHumidity, humidityRecoveryTarget(boostBaselineHumidity,
-                                HUMIDITY_RISE_THRESHOLD, HUMIDITY_RECOVERY_TOLERANCE)));
+                    "Boost phase complete; continuing recovery at %d%% toward %.1f%%.",
+                    currentHumidity, humidityRecoveryTarget(boostBaselineHumidity,
+                        HUMIDITY_POLICY)));
             }
         }
     }
@@ -1167,23 +1135,16 @@ public class HumidityMonitor {
         boostBaselineHumidity = baselineHumidity;
         boostExtensionLogged = false;
         long now = System.currentTimeMillis();
-        boostMinEndTime = now + boostMinimumDurationMillis(BOOST_DURATION_MS);
         boostEndTime = now + BOOST_DURATION_MS;
         log(String.format(Locale.ROOT,
-                "Boost activated at %d%% humidity with %.1f%% recovery baseline. Minimum duration: %d min, initial boost window: %d min.",
-                activationHumidity, baselineHumidity, boostMinimumDurationMillis(BOOST_DURATION_MS) / 60000,
-                BOOST_DURATION_MS / 60000));
-    }
-
-    static long boostMinimumDurationMillis(long configuredDurationMillis) {
-        return Math.min(10 * 60 * 1000L, configuredDurationMillis);
+            "Boost activated at %d%% humidity with %.1f%% recovery baseline. Boost phase: %d min.",
+            activationHumidity, baselineHumidity, BOOST_DURATION_MS / 60000));
     }
 
     private void deactivateBoost() {
         boostActive = false;
         boostBaselineHumidity = Double.NaN;
         boostExtensionLogged = false;
-        humidityRiseCandidateBaseline = Double.NaN;
         // Speed change will be handled by updateFanSpeed()
     }
 

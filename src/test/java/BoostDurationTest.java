@@ -4,12 +4,16 @@ import org.junit.jupiter.api.Test;
 
 class BoostDurationTest {
     @Test
-    void capsMinimumAtConfiguredDurationWhenShorterThanTenMinutes() {
-        assertEquals(5 * 60 * 1000L, HumidityMonitor.boostMinimumDurationMillis(5 * 60 * 1000L));
+    void configuredWindowRemainsInBoostUntilItsEnd() {
+        assertEquals(HumidityMonitor.HumidityRecoveryPhase.BOOST,
+                HumidityMonitor.humidityRecoveryPhase(true, 999, 1_000));
     }
 
     @Test
-    void retainsTenMinuteMinimumForLongerBoosts() {
-        assertEquals(10 * 60 * 1000L, HumidityMonitor.boostMinimumDurationMillis(30 * 60 * 1000L));
+    void recoveryStartsAtTheEndOfTheBoostWindow() {
+        assertEquals(HumidityMonitor.HumidityRecoveryPhase.RECOVERY,
+                HumidityMonitor.humidityRecoveryPhase(true, 1_000, 1_000));
+        assertEquals(HumidityMonitor.HumidityRecoveryPhase.INACTIVE,
+                HumidityMonitor.humidityRecoveryPhase(false, 999, 1_000));
     }
 }

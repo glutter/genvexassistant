@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.54
+
+- Replaced overlapping humidity rules with explicit INACTIVE, BOOST, and RECOVERY phases driven by one shared policy.
+- Compare against the rolling historical average so stable humidity does not boost, while a configured rise starts the full-speed BOOST phase.
+- Run the configured boost speed for the complete boost window, then recover at speed 2 until the hysteresis target is reached; absolute humidity and cooling can still demand more.
+- Simplified persisted recovery state without requiring a database migration, and cap larger legacy recovery-tolerance values for startup compatibility.
+
 ## 1.53
 
 - Prevented normal humidity drift from triggering recovery at the exact configured rise threshold.
