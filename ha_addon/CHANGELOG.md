@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.69
+
+- Keep a pending humidity boost distinct from an expired boost in live status and recovery logging.
+- Emit the extended-recovery state only after a real, initialized boost deadline has elapsed.
+
 ## 1.68
 
 - Migrate reduced `control_state` tables created by versions 1.59-1.65 by adding missing rollback compatibility columns.

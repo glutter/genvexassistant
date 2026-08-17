@@ -356,7 +356,7 @@ public class HumidityMonitor {
                     lastExtractTemp, lastRpm, lastBypassState, lastObservedFanSpeed, commandedFanSpeed,
                     boostActive,
                         humidityRecoveryTarget(boostBaselineHumidity, HUMIDITY_POLICY),
-                    boostActive && now >= boostEndTime,
+                    isBoostExtended(boostActive, now, boostEndTime),
                         eveningCoolingActive, eveningCoolingSpeed, staticRpmMode, staticRpmSpeed, monitorOnly,
                         manualOverrideActive && now < manualOverrideEndTime,
                         Math.max(0, (manualOverrideEndTime - now) / 1000),
@@ -989,6 +989,10 @@ public class HumidityMonitor {
         return boostEndTime > 0 ? boostEndTime : now + boostDurationMillis;
     }
 
+    static boolean isBoostExtended(boolean boostActive, long now, long boostEndTime) {
+        return boostActive && boostEndTime > 0 && now >= boostEndTime;
+    }
+
         static int selectHumidityRecoverySpeed(int humidity, double baselineHumidity,
             HumidityPolicy policy, int coolingSpeed,
             HumidityRecoveryPhase phase) {
@@ -1258,7 +1262,7 @@ public class HumidityMonitor {
                         currentHumidity, humidityRecoveryTarget(boostBaselineHumidity,
                                 HUMIDITY_POLICY)));
                 deactivateBoost();
-            } else if (now >= boostEndTime && !boostExtensionLogged) {
+            } else if (isBoostExtended(true, now, boostEndTime) && !boostExtensionLogged) {
                 boostExtensionLogged = true;
                 log(String.format(Locale.ROOT,
                     "Boost phase complete; continuing recovery at %d%% toward %.1f%%.",

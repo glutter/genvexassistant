@@ -22,4 +22,11 @@ class BoostDurationTest {
         assertEquals(16_000, HumidityMonitor.initializedBoostEndTime(0, 1_000, 15_000));
         assertEquals(2_000, HumidityMonitor.initializedBoostEndTime(2_000, 1_000, 15_000));
     }
+
+    @Test
+    void pendingBoostIsNotReportedAsExtended() {
+        assertEquals(false, HumidityMonitor.isBoostExtended(true, 1_000, 0));
+        assertEquals(true, HumidityMonitor.isBoostExtended(true, 1_000, 1_000));
+        assertEquals(false, HumidityMonitor.isBoostExtended(false, 1_000, 500));
+    }
 }
