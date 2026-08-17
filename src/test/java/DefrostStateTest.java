@@ -22,4 +22,14 @@ class DefrostStateTest {
         assertEquals(HumidityMonitor.DefrostState.INACTIVE,
                 HumidityMonitor.detectDefrostState(50, -1, 12.0));
     }
+
+    @Test
+    void reportsUnknownSeparatelyFromActiveDefrost() {
+        assertEquals(" [DEFROSTING]",
+                HumidityMonitor.defrostStatusSuffix(HumidityMonitor.DefrostState.ACTIVE));
+        assertEquals(" [DEFROST UNKNOWN]",
+                HumidityMonitor.defrostStatusSuffix(HumidityMonitor.DefrostState.UNKNOWN));
+        assertEquals("",
+                HumidityMonitor.defrostStatusSuffix(HumidityMonitor.DefrostState.INACTIVE));
+    }
 }

@@ -540,11 +540,11 @@ public class HumidityMonitor {
             result.tempExtract(), result.supplyRpm(), result.observedFanSpeed(), result.bypassState())) {
             log("Logged: Humidity=" + result.humidity() + "%, Temp=" + result.tempSupply() + "C, RPM="
                     + result.supplyRpm() + (result.boostActive() ? " [BOOST ACTIVE]" : "")
-                    + (result.defrosting() ? " [DEFROSTING]" : ""));
+                    + defrostStatusSuffix(result.defrostState()));
         } else {
             log("Read (Not Logged): Humidity=" + result.humidity() + "%, Temp=" + result.tempSupply()
                     + "C, RPM=" + result.supplyRpm() + (result.boostActive() ? " [BOOST ACTIVE]" : "")
-                    + (result.defrosting() ? " [DEFROSTING]" : ""));
+                    + defrostStatusSuffix(result.defrostState()));
         }
 
         publishHomeAssistant(result);
@@ -619,7 +619,7 @@ public class HumidityMonitor {
             lastObservedFanSpeed = observedFanSpeed;
 
             return new PollResult(humidity, tempSupply, tempOutside, tempExhaust, tempExtract, supplyRpm,
-                    observedFanSpeed, bypassState, boostActive, isDefrosting);
+                    observedFanSpeed, bypassState, boostActive, defrostState);
 
         } catch (Exception e) {
             logError("Error polling data: " + e.getMessage());
@@ -632,7 +632,7 @@ public class HumidityMonitor {
 
     private record PollResult(int humidity, double tempSupply, double tempOutside, double tempExhaust,
             double tempExtract, int supplyRpm, int observedFanSpeed, int bypassState, boolean boostActive,
-            boolean defrosting) {}
+            DefrostState defrostState) {}
 
     private int readOptionalDatapoint(int address, String label) throws InterruptedException {
         return readOptionalDatapoint(address, label, 1);
@@ -661,6 +661,14 @@ public class HumidityMonitor {
             return DefrostState.UNKNOWN;
         }
         return extractRpm > 500 ? DefrostState.ACTIVE : DefrostState.INACTIVE;
+    }
+
+    static String defrostStatusSuffix(DefrostState state) {
+        return switch (state) {
+            case ACTIVE -> " [DEFROSTING]";
+            case UNKNOWN -> " [DEFROST UNKNOWN]";
+            case INACTIVE -> "";
+        };
     }
 
     private ControlState controlStateSnapshot() {

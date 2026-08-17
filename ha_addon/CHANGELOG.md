@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.64
+
+- Preserve active, inactive, and unknown defrost states through poll results instead of flattening unknown to active.
+- Report unavailable defrost evidence as `DEFROST UNKNOWN` while retaining conservative fan-write protection.
+
 ## 1.63
 
 - Retry the defrost-critical extract-fan RPM read once before classifying defrost state as unknown.
