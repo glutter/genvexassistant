@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.58
+
+- Suspend active humidity recovery in monitor-only mode without deleting its persisted baseline and recovery state.
+- Resume evaluation of the preserved recovery state when automatic control is enabled again.
+
 ## 1.57
 
 - Treat defrost detection as active, inactive, or unknown instead of assuming missing extract-fan RPM means no defrost.

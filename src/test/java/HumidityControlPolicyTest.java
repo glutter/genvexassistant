@@ -177,6 +177,14 @@ class HumidityControlPolicyTest {
         }
     }
 
+    @Test
+    void activeRecoveryCanBeSuspendedWithoutDiscardingItsPersistedState() {
+        HumidityMonitor.ControlState active = new HumidityMonitor.ControlState(true, 45.0, 2_000L);
+
+        assertEquals(active, HumidityMonitor.restorableControlState(true, active));
+        assertFalse(HumidityMonitor.restorableControlState(false, active).boostActive());
+    }
+
         @Test
         void rejectsInvalidHumidityRecoveryConfiguration() {
         assertThrows(IllegalArgumentException.class, () ->

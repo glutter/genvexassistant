@@ -669,15 +669,22 @@ public class HumidityMonitor {
     }
 
     private void restoreControlState(ControlState state) {
-        boostActive = BOOST_ENABLED && !monitorOnly && state.boostActive()
-            && Double.isFinite(state.boostBaseline());
-        boostBaselineHumidity = boostActive ? state.boostBaseline() : Double.NaN;
-        boostEndTime = boostActive ? state.boostEnd() : 0;
+        ControlState restored = restorableControlState(BOOST_ENABLED, state);
+        boostActive = restored.boostActive();
+        boostBaselineHumidity = restored.boostBaseline();
+        boostEndTime = restored.boostEnd();
         if (boostActive) {
             log(String.format(Locale.ROOT,
                 "Restored humidity recovery toward %.1f%% after restart.",
                     humidityRecoveryTarget(boostBaselineHumidity, HUMIDITY_POLICY)));
         }
+    }
+
+    static ControlState restorableControlState(boolean boostEnabled, ControlState state) {
+        if (boostEnabled && state.boostActive() && Double.isFinite(state.boostBaseline())) {
+            return state;
+        }
+        return new ControlState(false, Double.NaN, 0);
     }
 
     private void persistControlState(ControlState state) {
@@ -1154,7 +1161,6 @@ public class HumidityMonitor {
                                 manualOverrideActive = false;
                                 manualOverrideSpeed = -1;
                                 manualOverrideEndTime = 0;
-                                deactivateBoost();
                                 resetEveningCooling();
                             }
                         }
