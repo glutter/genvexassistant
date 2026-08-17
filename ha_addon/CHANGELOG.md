@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.68
+
+- Migrate reduced `control_state` tables created by versions 1.59-1.65 by adding missing rollback compatibility columns.
+- Verify that an existing reduced SQLite schema supports legacy recovery queries after startup migration.
+
 ## 1.67
 
 - Prevent a newly detected humidity boost from deactivating while its fan-control deadline is still pending.

@@ -213,6 +213,9 @@ class HumidityControlPolicyTest {
     void newRecoverySchemaSupportsRollbackToLegacyQueries() throws Exception {
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:");
              Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE control_state (id INTEGER PRIMARY KEY, "
+                    + "boost_active INTEGER NOT NULL DEFAULT 0, boost_baseline REAL, "
+                    + "boost_end INTEGER NOT NULL DEFAULT 0)");
             HumidityMonitor.ensureControlStateTable(connection);
 
             statement.executeUpdate("UPDATE control_state SET boost_min_end = 1000, "

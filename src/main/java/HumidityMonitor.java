@@ -231,7 +231,25 @@ public class HumidityMonitor {
                     + "boost_end INTEGER NOT NULL DEFAULT 0, "
                     + "boost_min_end INTEGER NOT NULL DEFAULT 0, "
                     + "rise_candidate REAL)");
+            addControlStateColumnIfMissing(connection, "boost_min_end",
+                    "INTEGER NOT NULL DEFAULT 0");
+            addControlStateColumnIfMissing(connection, "rise_candidate", "REAL");
             statement.execute("INSERT OR IGNORE INTO control_state (id) VALUES (1)");
+        }
+    }
+
+    private static void addControlStateColumnIfMissing(Connection connection, String columnName,
+            String columnType) throws SQLException {
+        try (Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery("PRAGMA table_info(control_state)")) {
+            while (result.next()) {
+                if (columnName.equals(result.getString("name"))) {
+                    return;
+                }
+            }
+        }
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("ALTER TABLE control_state ADD COLUMN " + columnName + " " + columnType);
         }
     }
 
