@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.70
+
+- Activate evening cooling only while the read-only bypass status confirms that the bypass is open.
+- Prevent automatic cooling below 10 C outside or below 21 C indoors.
+- Update the README with a current mobile dashboard screenshot.
+
 ## 1.69
 
 - Keep a pending humidity boost distinct from an expired boost in live status and recovery logging.

@@ -1,4 +1,6 @@
 final class EveningCoolingPolicy {
+    private static final double MINIMUM_OUTSIDE_TEMP_C = 10.0;
+    private static final double MINIMUM_INDOOR_TEMP_C = 21.0;
     private static final double START_OUTSIDE_ADVANTAGE_C = 2.0;
     private static final double CONTINUE_OUTSIDE_ADVANTAGE_C = 1.0;
     private static final double START_SUPPLY_ADVANTAGE_C = 0.5;
@@ -15,10 +17,14 @@ final class EveningCoolingPolicy {
             double stopIndoorTemp,
             double startIndoorTemp,
             double minimumSupplyTemp,
+            boolean bypassOpen,
             boolean coolingStalled) {
         if (!areTemperaturesValid(supplyTemp, outsideTemp, extractTemp)
             || startIndoorTemp < stopIndoorTemp
-            || supplyTemp <= minimumSupplyTemp) {
+            || supplyTemp <= minimumSupplyTemp
+            || outsideTemp < MINIMUM_OUTSIDE_TEMP_C
+            || extractTemp < MINIMUM_INDOOR_TEMP_C
+            || !bypassOpen) {
             return 0;
         }
 

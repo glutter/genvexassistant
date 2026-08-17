@@ -55,7 +55,7 @@ Before starting, configure the add-on in the **Configuration** tab:
 - `cooling_fallback_start`: Cooling start when Home Assistant sunset state is unavailable (default: 18:00).
 - `cooling_escalation_minutes`: Minutes without meaningful delta improvement before speed 3 (default: 30).
 
-When indoor air remains warm and outside/supply air can cool it, evening cooling overrides quiet night speed. It starts at speed 2, may escalate to speed 3 after the configured progress interval, and returns to speed 1 when cooling is no longer useful.
+When indoor air remains warm and outside/supply air can cool it, evening cooling overrides quiet night speed. It requires a confirmed open bypass, at least 10 C outside, and at least 21 C indoors. It starts at speed 2, may escalate to speed 3 after the configured progress interval, and returns to speed 1 when cooling is no longer useful.
 
 The dashboard also records and displays the unit's bypass open/closed status. This is read-only telemetry: evening cooling controls fan speed, while the Genvex controller itself decides whether to open the bypass.
 
@@ -101,4 +101,3 @@ The add-on exports sensors to Home Assistant. You can use the standard **History
 - `sensor.genvex_fan_rpm`
 - `sensor.genvex_fan_speed`
 - `sensor.genvex_bypass`
-

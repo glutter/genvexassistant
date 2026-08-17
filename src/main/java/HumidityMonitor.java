@@ -611,16 +611,16 @@ public class HumidityMonitor {
                 commandedFanSpeed = observedFanSpeed;
             }
 
-            // Apply Fan Speed Control
-            updateFanSpeed(humidity, tempSupply, tempOutside, tempExtract, observedFanSpeed, supplyDuty,
-                    isDefrosting);
-
             int bypassState = -1;
             try {
                 bypassState = normalizeBypassState(client.readDatapoint(53));
             } catch (IOException e) {
                 logError("Bypass status unavailable: " + e.getMessage());
             }
+
+            // Apply Fan Speed Control
+            updateFanSpeed(humidity, tempSupply, tempOutside, tempExtract, observedFanSpeed, supplyDuty,
+                    isDefrosting, bypassState);
 
             log("Polled Data: Humidity=" + humidity + "%, SupplyTempRaw=" + tempSupplyRaw
                 + ", OutsideTempRaw=" + tempOutsideRaw + ", ExhaustTempRaw=" + tempExhaustRaw
@@ -826,7 +826,7 @@ public class HumidityMonitor {
     }
 
     private void updateFanSpeed(int humidity, double tempSupply, double tempOutside, double tempExtract,
-            int observedFanSpeed, int supplyDuty, boolean isDefrosting) {
+            int observedFanSpeed, int supplyDuty, boolean isDefrosting, int bypassState) {
         if (restartInProgress.get()) {
             log("Maintenance restart active. Automatic fan control paused.");
             return;
@@ -860,7 +860,7 @@ public class HumidityMonitor {
             targetSpeed = staticRpmSpeed;
             reason = "Static RPM Mode";
         } else if (boostActive) {
-            int coolingSpeed = selectEveningCoolingSpeed(tempSupply, tempOutside, tempExtract, now);
+            int coolingSpeed = selectEveningCoolingSpeed(tempSupply, tempOutside, tempExtract, bypassState, now);
             long currentTime = System.currentTimeMillis();
             boostEndTime = initializedBoostEndTime(boostEndTime, currentTime, BOOST_DURATION_MS);
             HumidityRecoveryPhase phase = humidityRecoveryPhase(true, currentTime, boostEndTime);
@@ -875,7 +875,7 @@ public class HumidityMonitor {
                 targetSpeed = Math.max(3, NORMAL_SPEED);
                 reason = "Humidity Very High";
             } else {
-                int coolingSpeed = selectEveningCoolingSpeed(tempSupply, tempOutside, tempExtract, now);
+                int coolingSpeed = selectEveningCoolingSpeed(tempSupply, tempOutside, tempExtract, bypassState, now);
                 targetSpeed = selectAutomaticSpeed(humidity, isNightTime, coolingSpeed,
                         HUMIDITY_LOW_THRESHOLD, HUMIDITY_HIGH_THRESHOLD, NORMAL_SPEED);
                 reason = coolingSpeed > 0 ? "Evening Cooling"
@@ -1044,7 +1044,8 @@ public class HumidityMonitor {
         return Double.NaN;
     }
 
-    private int selectEveningCoolingSpeed(double tempSupply, double tempOutside, double tempExtract, LocalTime now) {
+    private int selectEveningCoolingSpeed(double tempSupply, double tempOutside, double tempExtract,
+            int bypassState, LocalTime now) {
         if (!EVENING_COOLING_ENABLED || !isAfterSunset(now)) {
             resetEveningCooling();
             return 0;
@@ -1056,7 +1057,8 @@ public class HumidityMonitor {
             COOLING_ESCALATION_MS, COOLING_PROGRESS_C);
         int selectedSpeed = EveningCoolingPolicy.selectSpeed(
             eveningCoolingSpeed, tempSupply, tempOutside, tempExtract,
-                COOLING_STOP_TEMP, COOLING_START_TEMP, COOLING_MIN_SUPPLY_TEMP, stalled);
+                COOLING_STOP_TEMP, COOLING_START_TEMP, COOLING_MIN_SUPPLY_TEMP,
+                bypassState == 1, stalled);
 
         if (selectedSpeed == 0) {
             if (eveningCoolingActive) {
