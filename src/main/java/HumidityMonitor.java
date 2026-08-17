@@ -568,12 +568,12 @@ public class HumidityMonitor {
                 throw new IOException("Required datapoint is unavailable");
             }
 
+            checkBoostLogic(humidity, historicalHumidityAverage);
+
             int tempOutsideRaw = readOptionalDatapoint(21, "Outside temperature");
             int tempExhaustRaw = readOptionalDatapoint(22, "Exhaust temperature");
             int tempExtractRaw = readOptionalDatapoint(23, "Extract temperature");
             int extractRpm = readOptionalDatapoint(36, "Extract fan RPM");
-
-            checkBoostLogic(humidity, historicalHumidityAverage);
 
             int tempSensorOffsetRaw = Integer.parseInt(System.getenv().getOrDefault("TEMP_SUPPLY_OFFSET_RAW", "-300"));
             double tempSupply = rawTemperature(tempSupplyRaw, tempSensorOffsetRaw);
@@ -638,7 +638,7 @@ public class HumidityMonitor {
 
     private int readOptionalDatapoint(int address, String label) throws InterruptedException {
         try {
-            return client.readDatapoint(address);
+            return client.readDatapoint(address, 1);
         } catch (IOException e) {
             logError(label + " unavailable: " + e.getMessage());
             return -1;

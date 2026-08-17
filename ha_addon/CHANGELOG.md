@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.56
+
+- Evaluate humidity rises immediately after control-critical readings, before polling optional telemetry.
+- Limit optional datapoint reads to one attempt so unavailable secondary sensors cannot repeatedly delay humidity boost detection.
+
 ## 1.55
 
 - Limited automatic nighttime ventilation to speed 2 unless the current humidity rise still meets the configured delta threshold.

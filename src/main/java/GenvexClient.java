@@ -87,18 +87,22 @@ public class GenvexClient {
     }
 
     public int readDatapoint(int addr) throws IOException, InterruptedException {
+        return readDatapoint(addr, 5);
+    }
+
+    int readDatapoint(int addr, int retries) throws IOException, InterruptedException {
         if (!connected) throw new IOException("Not connected");
+        if (retries < 1) throw new IllegalArgumentException("Retries must be positive");
         
         byte[] cmd = buildDatapointReadCommand(addr);
-        // Increased retries to 5 for better stability
-        byte[] response = sendPacketAndWaitForResponse(sequenceId++, cmd, 5);
+        byte[] response = sendPacketAndWaitForResponse(sequenceId++, cmd, retries);
         
         if (response != null && response.length >= 4) {
             int val = decodeDatapointValue(response);
             // System.out.println("Read Datapoint " + addr + ": " + val); 
             return val;
         }
-        throw new IOException("Read datapoint " + addr + " failed after 5 attempts");
+        throw new IOException("Read datapoint " + addr + " failed after " + retries + " attempts");
     }
 
     static int decodeDatapointValue(byte[] response) {
@@ -171,7 +175,9 @@ public class GenvexClient {
             } catch (SocketTimeoutException e) {
                 // Retry
             }
-            Thread.sleep(500);
+            if (i + 1 < retries) {
+                Thread.sleep(500);
+            }
         }
         return null;
     }
