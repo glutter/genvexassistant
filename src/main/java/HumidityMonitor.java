@@ -829,8 +829,9 @@ public class HumidityMonitor {
             reason = "Static RPM Mode";
         } else if (boostActive) {
             int coolingSpeed = selectEveningCoolingSpeed(tempSupply, tempOutside, tempExtract, now);
-                HumidityRecoveryPhase phase = humidityRecoveryPhase(true, System.currentTimeMillis(),
-                    boostEndTime);
+            long currentTime = System.currentTimeMillis();
+            boostEndTime = initializedBoostEndTime(boostEndTime, currentTime, BOOST_DURATION_MS);
+            HumidityRecoveryPhase phase = humidityRecoveryPhase(true, currentTime, boostEndTime);
             targetSpeed = selectHumidityRecoverySpeed(humidity, boostBaselineHumidity,
                         HUMIDITY_POLICY, coolingSpeed, phase);
             reason = String.format(Locale.ROOT, coolingSpeed > 0
@@ -950,6 +951,10 @@ public class HumidityMonitor {
             return HumidityRecoveryPhase.INACTIVE;
         }
         return now < boostEndTime ? HumidityRecoveryPhase.BOOST : HumidityRecoveryPhase.RECOVERY;
+    }
+
+    static long initializedBoostEndTime(long boostEndTime, long now, long boostDurationMillis) {
+        return boostEndTime > 0 ? boostEndTime : now + boostDurationMillis;
     }
 
         static int selectHumidityRecoverySpeed(int humidity, double baselineHumidity,
@@ -1235,8 +1240,7 @@ public class HumidityMonitor {
         boostActive = true;
         boostBaselineHumidity = baselineHumidity;
         boostExtensionLogged = false;
-        long now = System.currentTimeMillis();
-        boostEndTime = now + BOOST_DURATION_MS;
+        boostEndTime = 0;
         log(String.format(Locale.ROOT,
             "Boost activated at %d%% humidity with %.1f%% recovery baseline. Boost phase: %d min.",
             activationHumidity, baselineHumidity, BOOST_DURATION_MS / 60000));

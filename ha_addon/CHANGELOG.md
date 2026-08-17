@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.62
+
+- Start the configured humidity boost duration when automatic fan control actually begins, rather than before optional telemetry reads.
+- Preserve existing recovery deadlines after restart while safely initializing an interrupted pending boost.
+
 ## 1.61
 
 - Removed the unused PostgreSQL `schema.sql`; runtime schema creation and migration are handled entirely by SQLite code.

@@ -16,4 +16,10 @@ class BoostDurationTest {
         assertEquals(HumidityMonitor.HumidityRecoveryPhase.INACTIVE,
                 HumidityMonitor.humidityRecoveryPhase(false, 999, 1_000));
     }
+
+    @Test
+    void boostDeadlineStartsWhenFanControlBegins() {
+        assertEquals(16_000, HumidityMonitor.initializedBoostEndTime(0, 1_000, 15_000));
+        assertEquals(2_000, HumidityMonitor.initializedBoostEndTime(2_000, 1_000, 15_000));
+    }
 }
