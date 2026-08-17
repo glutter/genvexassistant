@@ -185,6 +185,24 @@ class HumidityControlPolicyTest {
         assertFalse(HumidityMonitor.restorableControlState(false, active).boostActive());
     }
 
+    @Test
+    void legacyRecoveryColumnsRemainCompatible() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:");
+             Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE control_state (id INTEGER PRIMARY KEY, "
+                    + "boost_active INTEGER NOT NULL DEFAULT 0, boost_baseline REAL, "
+                    + "boost_min_end INTEGER NOT NULL DEFAULT 0, "
+                    + "boost_end INTEGER NOT NULL DEFAULT 0, rise_candidate REAL)");
+            statement.execute("INSERT INTO control_state (id) VALUES (1)");
+            HumidityMonitor.ControlState expected = new HumidityMonitor.ControlState(
+                    true, 47.0, 3_000L);
+
+            HumidityMonitor.saveControlState(connection, expected);
+
+            assertEquals(expected, HumidityMonitor.loadControlState(connection));
+        }
+    }
+
         @Test
         void rejectsInvalidHumidityRecoveryConfiguration() {
         assertThrows(IllegalArgumentException.class, () ->

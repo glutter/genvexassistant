@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.59
+
+- Removed obsolete `boost_min_end` and `rise_candidate` references from the humidity recovery schema and persistence queries.
+- Kept existing databases compatible: legacy columns may remain physically present but are no longer read or written.
+
 ## 1.58
 
 - Suspend active humidity recovery in monitor-only mode without deleting its persisted baseline and recovery state.

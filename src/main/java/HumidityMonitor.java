@@ -228,29 +228,26 @@ public class HumidityMonitor {
                     + "id INTEGER PRIMARY KEY CHECK (id = 1), "
                     + "boost_active INTEGER NOT NULL DEFAULT 0, "
                     + "boost_baseline REAL, "
-                    + "boost_min_end INTEGER NOT NULL DEFAULT 0, "
-                    + "boost_end INTEGER NOT NULL DEFAULT 0, "
-                    + "rise_candidate REAL)");
+                    + "boost_end INTEGER NOT NULL DEFAULT 0)");
             statement.execute("INSERT OR IGNORE INTO control_state (id) VALUES (1)");
         }
     }
 
     static void saveControlState(Connection connection, ControlState state) throws SQLException {
         String sql = "UPDATE control_state SET boost_active = ?, boost_baseline = ?, "
-                + "boost_min_end = ?, boost_end = ?, rise_candidate = NULL WHERE id = 1";
+                + "boost_end = ? WHERE id = 1";
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setInt(1, state.boostActive() ? 1 : 0);
             setNullableDouble(statement, 2, state.boostBaseline());
             statement.setLong(3, state.boostEnd());
-            statement.setLong(4, state.boostEnd());
             statement.executeUpdate();
         }
     }
 
     static ControlState loadControlState(Connection connection) throws SQLException {
         try (Statement statement = connection.createStatement();
-             ResultSet result = statement.executeQuery("SELECT boost_active, boost_baseline, "
-                     + "boost_min_end, boost_end FROM control_state WHERE id = 1")) {
+            ResultSet result = statement.executeQuery("SELECT boost_active, boost_baseline, "
+                      + "boost_end FROM control_state WHERE id = 1")) {
             if (result.next()) {
                 boolean active = result.getInt("boost_active") == 1;
                 double baseline = result.getDouble("boost_baseline");
