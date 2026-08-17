@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.66
+
+- Keep unused legacy recovery columns as compatibility placeholders in newly created SQLite databases.
+- Preserve rollback support to versions 1.56-1.58 without restoring legacy reads or writes in current control logic.
+
 ## 1.65
 
 - Launch the local monitor with Maven's full runtime dependency classpath instead of the Linux-optimized add-on JAR.

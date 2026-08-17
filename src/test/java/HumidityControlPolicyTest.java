@@ -203,6 +203,24 @@ class HumidityControlPolicyTest {
         }
     }
 
+    @Test
+    void newRecoverySchemaSupportsRollbackToLegacyQueries() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:");
+             Statement statement = connection.createStatement()) {
+            HumidityMonitor.ensureControlStateTable(connection);
+
+            statement.executeUpdate("UPDATE control_state SET boost_min_end = 1000, "
+                    + "rise_candidate = 45.0 WHERE id = 1");
+
+            try (ResultSet result = statement.executeQuery(
+                    "SELECT boost_min_end, rise_candidate FROM control_state WHERE id = 1")) {
+                assertTrue(result.next());
+                assertEquals(1_000L, result.getLong("boost_min_end"));
+                assertEquals(45.0, result.getDouble("rise_candidate"));
+            }
+        }
+    }
+
         @Test
         void rejectsInvalidHumidityRecoveryConfiguration() {
         assertThrows(IllegalArgumentException.class, () ->

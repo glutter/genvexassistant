@@ -228,7 +228,9 @@ public class HumidityMonitor {
                     + "id INTEGER PRIMARY KEY CHECK (id = 1), "
                     + "boost_active INTEGER NOT NULL DEFAULT 0, "
                     + "boost_baseline REAL, "
-                    + "boost_end INTEGER NOT NULL DEFAULT 0)");
+                    + "boost_end INTEGER NOT NULL DEFAULT 0, "
+                    + "boost_min_end INTEGER NOT NULL DEFAULT 0, "
+                    + "rise_candidate REAL)");
             statement.execute("INSERT OR IGNORE INTO control_state (id) VALUES (1)");
         }
     }
