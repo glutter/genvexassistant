@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.63
+
+- Retry the defrost-critical extract-fan RPM read once before classifying defrost state as unknown.
+- Keep all other optional telemetry at one attempt to preserve timely humidity control.
+
 ## 1.62
 
 - Start the configured humidity boost duration when automatic fan control actually begins, rather than before optional telemetry reads.

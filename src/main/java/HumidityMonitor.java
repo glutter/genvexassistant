@@ -570,7 +570,7 @@ public class HumidityMonitor {
             int tempOutsideRaw = readOptionalDatapoint(21, "Outside temperature");
             int tempExhaustRaw = readOptionalDatapoint(22, "Exhaust temperature");
             int tempExtractRaw = readOptionalDatapoint(23, "Extract temperature");
-            int extractRpm = readOptionalDatapoint(36, "Extract fan RPM");
+            int extractRpm = readOptionalDatapoint(36, "Extract fan RPM", 2);
 
             int tempSensorOffsetRaw = Integer.parseInt(System.getenv().getOrDefault("TEMP_SUPPLY_OFFSET_RAW", "-300"));
             double tempSupply = rawTemperature(tempSupplyRaw, tempSensorOffsetRaw);
@@ -635,8 +635,12 @@ public class HumidityMonitor {
             boolean defrosting) {}
 
     private int readOptionalDatapoint(int address, String label) throws InterruptedException {
+        return readOptionalDatapoint(address, label, 1);
+    }
+
+    private int readOptionalDatapoint(int address, String label, int retries) throws InterruptedException {
         try {
-            return client.readDatapoint(address, 1);
+            return client.readDatapoint(address, retries);
         } catch (IOException e) {
             logError(label + " unavailable: " + e.getMessage());
             return -1;
