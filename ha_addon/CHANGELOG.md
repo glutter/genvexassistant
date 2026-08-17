@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.61
+
+- Removed the unused PostgreSQL `schema.sql`; runtime schema creation and migration are handled entirely by SQLite code.
+- Removed the obsolete schema file from the local release script's staging list.
+
 ## 1.60
 
 - Replaced stale local launch commands with Maven-based scripts that resolve the current project artifact and source layout.
