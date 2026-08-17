@@ -144,6 +144,12 @@ class HumidityControlPolicyTest {
         }
 
     @Test
+    void pendingBoostCannotDeactivateBeforeFanControlStarts() {
+        assertFalse(HumidityMonitor.shouldDeactivateBoost(10_000, 0,
+                45, 45.0, DEFAULT_POLICY));
+    }
+
+    @Test
     void recoveryNeverLowersAnActiveCoolingTarget() {
         assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(47, 45.0,
             DEFAULT_POLICY, 3, HumidityMonitor.HumidityRecoveryPhase.RECOVERY));

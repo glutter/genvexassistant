@@ -999,7 +999,7 @@ public class HumidityMonitor {
 
     static boolean shouldDeactivateBoost(long now, long minimumEndTime, int humidity,
             double baselineHumidity, HumidityPolicy policy) {
-        return now >= minimumEndTime && Double.isFinite(baselineHumidity)
+        return minimumEndTime > 0 && now >= minimumEndTime && Double.isFinite(baselineHumidity)
             && humidity <= humidityRecoveryTarget(baselineHumidity, policy);
     }
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.67
+
+- Prevent a newly detected humidity boost from deactivating while its fan-control deadline is still pending.
+- Preserve the full configured boost window when a manual override temporarily delays automatic control.
+
 ## 1.66
 
 - Keep unused legacy recovery columns as compatibility placeholders in newly created SQLite databases.
