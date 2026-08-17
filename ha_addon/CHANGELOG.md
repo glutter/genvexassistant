@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.60
+
+- Replaced stale local launch commands with Maven-based scripts that resolve the current project artifact and source layout.
+- Removed obsolete PostgreSQL arguments from the monitor launcher and corrected local CLI, night-policy, humidity, and required-connection documentation.
+
 ## 1.59
 
 - Removed obsolete `boost_min_end` and `rise_candidate` references from the humidity recovery schema and persistence queries.

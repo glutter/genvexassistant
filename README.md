@@ -61,8 +61,8 @@ This project includes a local HTTP server to control the fan speed and read stat
 ### Run the CLI Tool
 To run the standalone CLI tool for testing:
 ```bash
-javac ConnectGenvex.java
-java ConnectGenvex
+mvn -q -DskipTests compile
+java -cp target/classes ConnectGenvex
 ```
 
 ## Humidity Control & Monitoring
@@ -72,13 +72,14 @@ A dedicated background service (`HumidityMonitor`) is available to automate fan 
 ### Features
 1.  **Data Logging**: Polls humidity, all four air temperatures, fan RPM, and fan speed every 30 seconds and stores them in a SQLite database.
 2.  **Humidity Recovery**: Compares humidity with the rolling 30-minute average. A rise of 4 percentage points starts a 15-minute boost at speed 3, followed by recovery at speed 2 until the delta falls to 3 points.
-3.  **Night Mode**: Uses fan speed 1 between 22:00 and 06:30 when active cooling is not needed.
-4.  **Evening Cooling**: After sunset, uses cooler outside/supply air at speed 2, including overnight, and escalates to speed 3 only if indoor temperature does not improve.
+3.  **Night Mode**: Limits automatic ventilation to speed 2 between 22:00 and 06:30; speed 3 is allowed only while the configured humidity delta is present.
+4.  **Evening Cooling**: After sunset, uses cooler outside/supply air at speed 2 and can escalate during the day; the night limit still applies.
 5.  **Bypass Monitoring**: Reads bypass open/closed state from datapoint 53, stores it in history, and displays it with state-specific icons. Cooling changes fan speed only; the unit's own controller operates the bypass because no verified bypass write address is available.
-5.  **General Control**:
-    *   **> 60% Humidity**: Speed 3 (High)
+6.  **General Control**:
+    *   **>= 80% Humidity**: Speed 3 during the day
+    *   **>= 65% Humidity**: At least speed 2
     *   **< 30% Humidity**: Speed 1 (Low)
-    *   **Normal**: Speed 2
+    *   **Normal**: Configured normal speed (default: 1)
 
 ### Setup
 1.  **Database**: The application uses an embedded SQLite database (`genvex.db`). No external database configuration is required.
@@ -88,9 +89,9 @@ A dedicated background service (`HumidityMonitor`) is available to automate fan 
     ./start_monitor.sh
     ```
 
-3.  **Environment Variables** (optional):
-    - `GENVEX_IP`: IP address of your Genvex unit (default: 192.168.1.100)
-    - `GENVEX_EMAIL`: Email/password for Genvex connection
+3.  **Environment Variables**:
+    - `GENVEX_IP`: Required IP address of your Genvex unit
+    - `GENVEX_EMAIL`: Required email/password for the Genvex connection
     - `POLL_INTERVAL`: Polling interval in seconds (default: 30)
     - `MONITOR_ONLY`: Disable automatic fan writes for passive monitoring (default: false)
     - `HUMIDITY_BASELINE_MINUTES`: Rolling historical window used as the humidity baseline (default: 30)
