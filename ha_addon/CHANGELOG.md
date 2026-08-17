@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.65
+
+- Launch the local monitor with Maven's full runtime dependency classpath instead of the Linux-optimized add-on JAR.
+- Restore SQLite native-library support for local macOS development without enlarging the deployed Home Assistant artifact.
+
 ## 1.64
 
 - Preserve active, inactive, and unknown defrost states through poll results instead of flattening unknown to active.

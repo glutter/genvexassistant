@@ -2,8 +2,8 @@
 set -eu
 
 echo "Building Genvex Humidity Monitor..."
-mvn -q package
+mvn -q compile dependency:build-classpath -Dmdep.outputFile=target/runtime-classpath.txt
 
 echo "Starting Humidity Monitor..."
-VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
-exec java -jar "target/genvex-integration-${VERSION}.jar"
+RUNTIME_CLASSPATH=$(<target/runtime-classpath.txt)
+exec java -cp "target/classes:${RUNTIME_CLASSPATH}" HumidityMonitor
