@@ -98,7 +98,6 @@ public class GenvexClient {
             // System.out.println("Read Datapoint " + addr + ": " + val); 
             return val;
         }
-        connected = false;
         throw new IOException("Read datapoint " + addr + " failed after 5 attempts");
     }
 

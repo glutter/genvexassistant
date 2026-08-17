@@ -8,6 +8,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.time.Instant;
+import java.time.LocalTime;
 
 import org.junit.jupiter.api.Test;
 
@@ -53,6 +54,38 @@ class HumidityControlPolicyTest {
     @Test
     void coolingDoesNotLowerAHigherHumidityTarget() {
         assertEquals(3, HumidityMonitor.selectAutomaticSpeed(70, false, 2, 30, 65, 3));
+    }
+
+    @Test
+    void nightSpeedIsLimitedWithoutALargeHumidityDelta() {
+        assertEquals(2, HumidityMonitor.limitNightSpeed(3, true, 80,
+                Double.NaN, DEFAULT_POLICY));
+        assertEquals(2, HumidityMonitor.limitNightSpeed(3, true, 53,
+                50.0, DEFAULT_POLICY));
+    }
+
+    @Test
+    void largeHumidityDeltaCanExceedNightLimit() {
+        assertEquals(3, HumidityMonitor.limitNightSpeed(3, true, 54,
+                50.0, DEFAULT_POLICY));
+    }
+
+    @Test
+    void nightLimitDoesNotApplyDuringTheDay() {
+        assertEquals(3, HumidityMonitor.limitNightSpeed(3, false, 50,
+                Double.NaN, DEFAULT_POLICY));
+    }
+
+    @Test
+    void acknowledgedCommandIsNotRepeatedDuringItsGracePeriod() {
+        assertFalse(HumidityMonitor.shouldSendFanCommand(2, 1, 2,
+                false, 59_999, 0, 60_000));
+        assertTrue(HumidityMonitor.shouldSendFanCommand(2, 1, 2,
+                false, 60_000, 0, 60_000));
+        assertTrue(HumidityMonitor.shouldSendFanCommand(3, 2, 2,
+                false, 1, 0, 60_000));
+        assertTrue(HumidityMonitor.shouldSendFanCommand(2, 2, 2,
+                true, 1, 0, 60_000));
     }
 
     @Test
@@ -172,5 +205,21 @@ class HumidityControlPolicyTest {
                 new HumidityMonitor.HumidityPolicy(4, 5, 3, 1, 30, 65, 80);
 
         assertEquals(46.0, HumidityMonitor.humidityRecoveryTarget(46.0, legacyPolicy));
+    }
+
+    @Test
+    void rejectsUnsafeRuntimeConfiguration() {
+        assertThrows(IllegalArgumentException.class, () ->
+                HumidityMonitor.validateRuntimeConfiguration(0, 60_000,
+                        LocalTime.of(22, 0), LocalTime.of(6, 30), 22.5, 22.0, 15.0));
+        assertThrows(IllegalArgumentException.class, () ->
+                HumidityMonitor.validateRuntimeConfiguration(30, 0,
+                        LocalTime.of(22, 0), LocalTime.of(6, 30), 22.5, 22.0, 15.0));
+        assertThrows(IllegalArgumentException.class, () ->
+                HumidityMonitor.validateRuntimeConfiguration(30, 60_000,
+                        LocalTime.of(22, 0), LocalTime.of(22, 0), 22.5, 22.0, 15.0));
+        assertThrows(IllegalArgumentException.class, () ->
+                HumidityMonitor.validateRuntimeConfiguration(30, 60_000,
+                        LocalTime.of(22, 0), LocalTime.of(6, 30), 21.5, 22.0, 15.0));
     }
 }

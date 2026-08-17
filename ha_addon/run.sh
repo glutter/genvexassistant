@@ -1,4 +1,5 @@
 #!/bin/bash
+set -eu
 
 echo "Starting Genvex Monitor Add-on..."
 
@@ -6,32 +7,44 @@ CONFIG_PATH=/data/options.json
 
 # Check if config exists
 if [ -f "$CONFIG_PATH" ]; then
-    export GENVEX_IP=$(jq --raw-output '.genvex_ip' $CONFIG_PATH)
-    export GENVEX_EMAIL=$(jq --raw-output '.genvex_email' $CONFIG_PATH)
-    export POLL_INTERVAL=$(jq --raw-output '.poll_interval' $CONFIG_PATH)
-    export MONITOR_ONLY=$(jq --raw-output 'if has("monitor_only") then .monitor_only else false end' $CONFIG_PATH)
-    export BOOST_ENABLED=$(jq --raw-output '.boost_enabled' $CONFIG_PATH)
-    export HUMIDITY_RISE_THRESHOLD=$(jq --raw-output '.humidity_rise_threshold' $CONFIG_PATH)
-    export BOOST_SPEED=$(jq --raw-output '.boost_speed' $CONFIG_PATH)
-    export NORMAL_SPEED=$(jq --raw-output '.normal_speed' $CONFIG_PATH)
-    export BOOST_DURATION_MINUTES=$(jq --raw-output '.boost_duration_minutes' $CONFIG_PATH)
-    export HUMIDITY_BASELINE_MINUTES=$(jq --raw-output '.humidity_baseline_minutes // 30' $CONFIG_PATH)
-    export HUMIDITY_RECOVERY_TOLERANCE=$(jq --raw-output '.humidity_recovery_tolerance // 1' $CONFIG_PATH)
-    export HUMIDITY_VERY_HIGH_THRESHOLD=$(jq --raw-output '.humidity_very_high_threshold' $CONFIG_PATH)
-    export HUMIDITY_HIGH_THRESHOLD=$(jq --raw-output '.humidity_high_threshold' $CONFIG_PATH)
-    export HUMIDITY_LOW_THRESHOLD=$(jq --raw-output '.humidity_low_threshold' $CONFIG_PATH)
-    export NIGHT_START=$(jq --raw-output '.night_start' $CONFIG_PATH)
-    export NIGHT_END=$(jq --raw-output '.night_end' $CONFIG_PATH)
-    export TEMP_SUPPLY_OFFSET_RAW=$(jq --raw-output '.temp_supply_offset_raw // -300' $CONFIG_PATH)
-    export EVENING_COOLING_ENABLED=$(jq --raw-output 'if has("evening_cooling_enabled") then .evening_cooling_enabled else true end' $CONFIG_PATH)
-    export COOLING_STOP_TEMP=$(jq --raw-output '.cooling_stop_temp // .cooling_target_temp // 22.0' $CONFIG_PATH)
-    export COOLING_START_TEMP=$(jq --raw-output '.cooling_start_temp // ((.cooling_target_temp // 22.0) + 0.5)' $CONFIG_PATH)
-    export COOLING_MIN_SUPPLY_TEMP=$(jq --raw-output '.cooling_min_supply_temp // 15.0' $CONFIG_PATH)
-    export COOLING_FALLBACK_START=$(jq --raw-output '.cooling_fallback_start // "18:00"' $CONFIG_PATH)
-    export COOLING_ESCALATION_MINUTES=$(jq --raw-output '.cooling_escalation_minutes // 30' $CONFIG_PATH)
+    export GENVEX_IP=$(jq --exit-status --raw-output '.genvex_ip // ""' "$CONFIG_PATH")
+    export GENVEX_EMAIL=$(jq --exit-status --raw-output '.genvex_email // ""' "$CONFIG_PATH")
+    export POLL_INTERVAL=$(jq --exit-status --raw-output '.poll_interval // 30' "$CONFIG_PATH")
+    export MONITOR_ONLY=$(jq --raw-output 'if has("monitor_only") then .monitor_only else false end' "$CONFIG_PATH")
+    export BOOST_ENABLED=$(jq --raw-output 'if has("boost_enabled") then .boost_enabled else true end' "$CONFIG_PATH")
+    export HUMIDITY_RISE_THRESHOLD=$(jq --raw-output '.humidity_rise_threshold // 4' "$CONFIG_PATH")
+    export BOOST_SPEED=$(jq --raw-output '.boost_speed // 3' "$CONFIG_PATH")
+    export NORMAL_SPEED=$(jq --raw-output '.normal_speed // 1' "$CONFIG_PATH")
+    export BOOST_DURATION_MINUTES=$(jq --raw-output '.boost_duration_minutes // 15' "$CONFIG_PATH")
+    export HUMIDITY_BASELINE_MINUTES=$(jq --raw-output '.humidity_baseline_minutes // 30' "$CONFIG_PATH")
+    export HUMIDITY_RECOVERY_TOLERANCE=$(jq --raw-output '.humidity_recovery_tolerance // 1' "$CONFIG_PATH")
+    export HUMIDITY_VERY_HIGH_THRESHOLD=$(jq --raw-output '.humidity_very_high_threshold // 80' "$CONFIG_PATH")
+    export HUMIDITY_HIGH_THRESHOLD=$(jq --raw-output '.humidity_high_threshold // 65' "$CONFIG_PATH")
+    export HUMIDITY_LOW_THRESHOLD=$(jq --raw-output '.humidity_low_threshold // 30' "$CONFIG_PATH")
+    export NIGHT_START=$(jq --raw-output '.night_start // "22:00"' "$CONFIG_PATH")
+    export NIGHT_END=$(jq --raw-output '.night_end // "06:30"' "$CONFIG_PATH")
+    export TEMP_SUPPLY_OFFSET_RAW=$(jq --raw-output '.temp_supply_offset_raw // -300' "$CONFIG_PATH")
+    export EVENING_COOLING_ENABLED=$(jq --raw-output 'if has("evening_cooling_enabled") then .evening_cooling_enabled else true end' "$CONFIG_PATH")
+    export COOLING_STOP_TEMP=$(jq --raw-output '.cooling_stop_temp // .cooling_target_temp // 22.0' "$CONFIG_PATH")
+    export COOLING_START_TEMP=$(jq --raw-output '.cooling_start_temp // ((.cooling_target_temp // 22.0) + 0.5)' "$CONFIG_PATH")
+    export COOLING_MIN_SUPPLY_TEMP=$(jq --raw-output '.cooling_min_supply_temp // 15.0' "$CONFIG_PATH")
+    export COOLING_FALLBACK_START=$(jq --raw-output '.cooling_fallback_start // "18:00"' "$CONFIG_PATH")
+    export COOLING_ESCALATION_MINUTES=$(jq --raw-output '.cooling_escalation_minutes // 30' "$CONFIG_PATH")
 else
     echo "Warning: $CONFIG_PATH not found. Using environment variables or defaults."
 fi
+
+: "${GENVEX_IP:=}"
+: "${POLL_INTERVAL:=30}"
+: "${MONITOR_ONLY:=false}"
+: "${BOOST_ENABLED:=true}"
+: "${HUMIDITY_BASELINE_MINUTES:=30}"
+: "${HUMIDITY_RECOVERY_TOLERANCE:=1}"
+: "${TEMP_SUPPLY_OFFSET_RAW:=-300}"
+: "${EVENING_COOLING_ENABLED:=true}"
+: "${COOLING_START_TEMP:=22.5}"
+: "${COOLING_STOP_TEMP:=22.0}"
+: "${COOLING_MIN_SUPPLY_TEMP:=15.0}"
 
 echo "Configuration:"
 echo "  Genvex IP: $GENVEX_IP"

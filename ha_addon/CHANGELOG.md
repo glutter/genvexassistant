@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.55
+
+- Limited automatic nighttime ventilation to speed 2 unless the current humidity rise still meets the configured delta threshold.
+- Kept automatic control running when optional temperature, extract-fan, or bypass datapoints time out, while retaining strict checks for control-critical readings.
+- Reduced repeated fan writes by tracking acknowledged commands and retrying persistent observed mismatches after a grace period.
+- Serialized the maintenance restart sequence and blocked restart, manual ventilation, and static-speed writes while monitor-only mode is active.
+- Rejected malformed manual-control requests and capped their duration at 24 hours instead of silently changing invalid values.
+- Added startup and add-on schema validation for unsafe intervals, fan levels, humidity values, cooling settings, and ambiguous night schedules.
+- Made add-on option loading fail fast on malformed configuration while retaining explicit defaults for upgrades from older versions.
+
 ## 1.54
 
 - Replaced overlapping humidity rules with explicit INACTIVE, BOOST, and RECOVERY phases driven by one shared policy.

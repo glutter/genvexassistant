@@ -1,6 +1,6 @@
 {
   "name": "Genvex Humidity Monitor",
-  "version": "1.54",
+  "version": "1.55",
   "slug": "genvex_monitor",
   "description": "Java-based Genvex Ventilation Control and Monitoring",
   "url": "https://github.com/lutherh/genvexassistant",
@@ -40,18 +40,18 @@
   "schema": {
     "genvex_ip": "str",
     "genvex_email": "str",
-    "poll_interval": "int",
+    "poll_interval": "int(1,300)",
     "monitor_only": "bool",
     "boost_enabled": "bool",
-    "humidity_rise_threshold": "int",
-    "boost_speed": "int",
-    "normal_speed": "int",
-    "boost_duration_minutes": "int",
-    "humidity_baseline_minutes": "int",
-    "humidity_recovery_tolerance": "int",
-    "humidity_very_high_threshold": "int",
-    "humidity_high_threshold": "int",
-    "humidity_low_threshold": "int",
+    "humidity_rise_threshold": "int(1,100)",
+    "boost_speed": "int(0,4)",
+    "normal_speed": "int(0,4)",
+    "boost_duration_minutes": "int(1,1440)",
+    "humidity_baseline_minutes": "int(1,1440)",
+    "humidity_recovery_tolerance": "int(0,100)",
+    "humidity_very_high_threshold": "int(0,100)",
+    "humidity_high_threshold": "int(0,100)",
+    "humidity_low_threshold": "int(0,100)",
     "night_start": "str",
     "night_end": "str",
     "temp_supply_offset_raw": "int",
@@ -60,6 +60,6 @@
     "cooling_start_temp": "float",
     "cooling_min_supply_temp": "float",
     "cooling_fallback_start": "str",
-    "cooling_escalation_minutes": "int"
+    "cooling_escalation_minutes": "int(1,1440)"
   }
 }

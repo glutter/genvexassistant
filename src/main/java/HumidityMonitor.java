@@ -35,6 +35,7 @@ public class HumidityMonitor {
     private static final String DB_URL = "jdbc:sqlite:" + DB_PATH;
     
     private static final int WEB_PORT = 8081; // Different from GenvexServer 8080
+    private static final int MAX_MANUAL_OVERRIDE_MINUTES = 24 * 60;
 
     private final GenvexClient client;
     private final Object clientLock = new Object();
@@ -42,6 +43,7 @@ public class HumidityMonitor {
     private final ExecutorService homeAssistantPublisher = Executors.newSingleThreadExecutor();
     private final AtomicReference<PollResult> pendingHomeAssistantResult = new AtomicReference<>();
     private final AtomicBoolean homeAssistantPublishRunning = new AtomicBoolean();
+    private final AtomicBoolean restartInProgress = new AtomicBoolean();
     private final String sessionId = java.util.UUID.randomUUID().toString().substring(0, 6);
 
     // Configuration
@@ -93,6 +95,7 @@ public class HumidityMonitor {
     private double boostBaselineHumidity = Double.NaN;
     private boolean boostExtensionLogged = false;
     private int commandedFanSpeed = -1;
+    private long lastFanCommandTime = 0;
     private int lastObservedFanSpeed = -1;
     private int dbErrorCount = 0;
     // Manual override (Udluftning)
@@ -118,6 +121,8 @@ public class HumidityMonitor {
         validateControlConfiguration(HUMIDITY_RISE_THRESHOLD, HUMIDITY_BASELINE_MINUTES,
                 HUMIDITY_RECOVERY_TOLERANCE, BOOST_DURATION_MS, BOOST_SPEED, NORMAL_SPEED,
                 HUMIDITY_LOW_THRESHOLD, HUMIDITY_HIGH_THRESHOLD, HUMIDITY_VERY_HIGH_THRESHOLD);
+        validateRuntimeConfiguration(POLL_INTERVAL, COOLING_ESCALATION_MS, NIGHT_START, NIGHT_END,
+                COOLING_START_TEMP, COOLING_STOP_TEMP, COOLING_MIN_SUPPLY_TEMP);
 
         // Initialize Database
         initializeDatabase();
@@ -126,11 +131,6 @@ public class HumidityMonitor {
         startWebServer();
 
         log("Starting polling service with Session ID: " + sessionId);
-        if (COOLING_START_TEMP < COOLING_STOP_TEMP) {
-            logError(String.format(Locale.ROOT,
-                "Evening cooling disabled: start temperature %.1fC must be at least stop temperature %.1fC.",
-                COOLING_START_TEMP, COOLING_STOP_TEMP));
-        }
 
         // Run with fixed delay to allow natural drift and prevent lock-step collisions
         scheduler.scheduleWithFixedDelay(this::pollAndStore, 0, POLL_INTERVAL, TimeUnit.SECONDS);
@@ -162,6 +162,27 @@ public class HumidityMonitor {
         if (lowThreshold < 0 || lowThreshold >= highThreshold
                 || highThreshold > veryHighThreshold || veryHighThreshold > 100) {
             throw new IllegalArgumentException("Humidity thresholds must satisfy 0 <= low < high <= very high <= 100");
+        }
+    }
+
+    static void validateRuntimeConfiguration(int pollIntervalSeconds, long coolingEscalationMillis,
+            LocalTime nightStart, LocalTime nightEnd, double coolingStartTemp,
+            double coolingStopTemp, double coolingMinSupplyTemp) {
+        if (pollIntervalSeconds <= 0) {
+            throw new IllegalArgumentException("POLL_INTERVAL must be positive");
+        }
+        if (coolingEscalationMillis <= 0) {
+            throw new IllegalArgumentException("COOLING_ESCALATION_MINUTES must be positive");
+        }
+        if (nightStart.equals(nightEnd)) {
+            throw new IllegalArgumentException("NIGHT_START and NIGHT_END must be different");
+        }
+        if (!Double.isFinite(coolingStartTemp) || !Double.isFinite(coolingStopTemp)
+                || !Double.isFinite(coolingMinSupplyTemp)) {
+            throw new IllegalArgumentException("Cooling temperatures must be finite");
+        }
+        if (coolingStartTemp < coolingStopTemp) {
+            throw new IllegalArgumentException("COOLING_START_TEMP must be at least COOLING_STOP_TEMP");
         }
     }
 
@@ -540,16 +561,17 @@ public class HumidityMonitor {
 
             int humidity = client.readDatapoint(26);
             int tempSupplyRaw = client.readDatapoint(20);
-            int tempOutsideRaw = client.readDatapoint(21);
-            int tempExhaustRaw = client.readDatapoint(22);
-            int tempExtractRaw = client.readDatapoint(23);
             int supplyRpm = client.readDatapoint(35);
             int supplyDuty = client.readDatapoint(18);
-            int extractRpm = client.readDatapoint(36);
 
             if (humidity == -1 || tempSupplyRaw == -1 || supplyRpm == -1 || supplyDuty == -1) {
                 throw new IOException("Required datapoint is unavailable");
             }
+
+            int tempOutsideRaw = readOptionalDatapoint(21, "Outside temperature");
+            int tempExhaustRaw = readOptionalDatapoint(22, "Exhaust temperature");
+            int tempExtractRaw = readOptionalDatapoint(23, "Extract temperature");
+            int extractRpm = readOptionalDatapoint(36, "Extract fan RPM");
 
             checkBoostLogic(humidity, historicalHumidityAverage);
 
@@ -614,6 +636,15 @@ public class HumidityMonitor {
             double tempExtract, int supplyRpm, int observedFanSpeed, int bypassState, boolean boostActive,
             boolean defrosting) {}
 
+    private int readOptionalDatapoint(int address, String label) throws InterruptedException {
+        try {
+            return client.readDatapoint(address);
+        } catch (IOException e) {
+            logError(label + " unavailable: " + e.getMessage());
+            return -1;
+        }
+    }
+
     private ControlState controlStateSnapshot() {
         synchronized (clientLock) {
             return new ControlState(boostActive, boostBaselineHumidity, boostEndTime);
@@ -675,6 +706,7 @@ public class HumidityMonitor {
                 client.connect();
                 client.setFanSpeed(speed);
                 commandedFanSpeed = speed;
+                lastFanCommandTime = System.currentTimeMillis();
             } finally {
                 client.disconnect();
             }
@@ -742,6 +774,10 @@ public class HumidityMonitor {
 
     private void updateFanSpeed(int humidity, double tempSupply, double tempOutside, double tempExtract,
             int observedFanSpeed, int supplyDuty, boolean isDefrosting) {
+        if (restartInProgress.get()) {
+            log("Maintenance restart active. Automatic fan control paused.");
+            return;
+        }
         if (monitorOnly) {
             resetEveningCooling();
             log("Monitor mode active. Recommended speed: " + NORMAL_SPEED + " (Reason: Monitor Only)");
@@ -750,6 +786,9 @@ public class HumidityMonitor {
 
         int targetSpeed = NORMAL_SPEED;
         String reason = "Normal";
+        LocalTime now = LocalTime.now();
+        boolean isNightTime = isNight(now);
+        boolean automaticControl = true;
 
         if (manualOverrideActive && System.currentTimeMillis() >= manualOverrideEndTime) {
             manualOverrideActive = false;
@@ -759,14 +798,15 @@ public class HumidityMonitor {
         // Manual override takes precedence over everything
         if (manualOverrideActive && System.currentTimeMillis() < manualOverrideEndTime) {
             resetEveningCooling();
+            automaticControl = false;
             targetSpeed = manualOverrideSpeed;
             reason = "Manual Override";
         } else if (staticRpmMode) {
             resetEveningCooling();
+            automaticControl = false;
             targetSpeed = staticRpmSpeed;
             reason = "Static RPM Mode";
         } else if (boostActive) {
-            LocalTime now = LocalTime.now();
             int coolingSpeed = selectEveningCoolingSpeed(tempSupply, tempOutside, tempExtract, now);
                 HumidityRecoveryPhase phase = humidityRecoveryPhase(true, System.currentTimeMillis(),
                     boostEndTime);
@@ -776,9 +816,6 @@ public class HumidityMonitor {
                 ? "Humidity %s + Evening Cooling (delta %.1f%%)"
                 : "Humidity %s (delta %.1f%%)", phase, humidity - boostBaselineHumidity);
         } else {
-            LocalTime now = LocalTime.now();
-            boolean isNightTime = isNight(now);
-
             if (humidity >= HUMIDITY_VERY_HIGH_THRESHOLD) {
                 resetEveningCooling();
                 targetSpeed = Math.max(3, NORMAL_SPEED);
@@ -791,6 +828,15 @@ public class HumidityMonitor {
                         : humidity >= HUMIDITY_HIGH_THRESHOLD ? "Humidity High"
                         : isNightTime ? "Night Mode"
                         : humidity <= HUMIDITY_LOW_THRESHOLD ? "Humidity Low" : "Normal";
+            }
+        }
+
+        int unrestrictedTargetSpeed = targetSpeed;
+        if (automaticControl) {
+            targetSpeed = limitNightSpeed(targetSpeed, isNightTime, humidity,
+                    boostBaselineHumidity, HUMIDITY_POLICY);
+            if (targetSpeed < unrestrictedTargetSpeed) {
+                reason += " + Night Noise Limit";
             }
         }
         
@@ -810,7 +856,10 @@ public class HumidityMonitor {
             forceUpdate = true;
         }
 
-        if (targetSpeed != observedFanSpeed || forceUpdate) {
+        long nowMillis = System.currentTimeMillis();
+        long retryIntervalMillis = Math.max(60_000L, POLL_INTERVAL * 2_000L);
+        if (shouldSendFanCommand(targetSpeed, observedFanSpeed, commandedFanSpeed, forceUpdate,
+                nowMillis, lastFanCommandTime, retryIntervalMillis)) {
             if (isDefrosting) {
                  log("Defrost active. Not forcing fan speed update to avoid fighting controller.");
             } else {
@@ -818,6 +867,7 @@ public class HumidityMonitor {
                     log("Adjusting Fan Speed: " + observedFanSpeed + " -> " + targetSpeed + " (Reason: " + reason + ", Force: " + forceUpdate + ")");
                     client.setFanSpeed(targetSpeed);
                     commandedFanSpeed = targetSpeed;
+                    lastFanCommandTime = nowMillis;
                 } catch (Exception e) {
                     logError("Failed to set fan speed: " + e.getMessage());
                 }
@@ -848,6 +898,20 @@ public class HumidityMonitor {
             return 1;
         }
         return selectHumiditySpeed(humidity, lowThreshold, highThreshold, normalSpeed);
+    }
+
+    static int limitNightSpeed(int targetSpeed, boolean night, int humidity,
+            double baselineHumidity, HumidityPolicy policy) {
+        if (!night || hasHumidityRise(humidity, baselineHumidity, policy)) {
+            return targetSpeed;
+        }
+        return Math.min(2, targetSpeed);
+    }
+
+    static boolean shouldSendFanCommand(int targetSpeed, int observedFanSpeed, int commandedFanSpeed,
+            boolean forceUpdate, long now, long lastCommandTime, long retryIntervalMillis) {
+        return forceUpdate || targetSpeed != commandedFanSpeed
+                || (targetSpeed != observedFanSpeed && now - lastCommandTime >= retryIntervalMillis);
     }
 
     enum HumidityRecoveryPhase {
@@ -1016,21 +1080,34 @@ public class HumidityMonitor {
                  sendError(t, 405, "Method Not Allowed");
                  return;
             }
+
+            synchronized (clientLock) {
+                if (monitorOnly) {
+                    sendError(t, 409, "Disable monitor-only mode before restarting the unit");
+                    return;
+                }
+                if (!restartInProgress.compareAndSet(false, true)) {
+                    sendError(t, 409, "A restart is already in progress");
+                    return;
+                }
+            }
             
             log("Received SYSTEM RESTART command.");
             
             new Thread(() -> {
-                 try {
-                     log("Restart sequence: Setting fan to 0...");
-                     setFanSpeedImmediately(0);
-                     Thread.sleep(5000);
-                     log("Restart sequence: Setting fan to 1...");
-                     setFanSpeedImmediately(1);
-                     Thread.sleep(5000);
-                     log("Restart sequence complete.");
-                 } catch (Exception e) {
-                     logError("Restart sequence failed: " + e.getMessage());
-                 }
+                try {
+                    log("Restart sequence: Setting fan to 0...");
+                    setFanSpeedImmediately(0);
+                    Thread.sleep(5000);
+                    log("Restart sequence: Setting fan to 1...");
+                    setFanSpeedImmediately(1);
+                    Thread.sleep(5000);
+                    log("Restart sequence complete.");
+                } catch (Exception e) {
+                    logError("Restart sequence failed: " + e.getMessage());
+                } finally {
+                    restartInProgress.set(false);
+                }
             }).start();
             
             sendJson(t, "{\"status\": \"ok\", \"message\": \"Restart sequence initiated\"}");
@@ -1050,6 +1127,10 @@ public class HumidityMonitor {
                      if (val != null && (val.equalsIgnoreCase("true") || val.equalsIgnoreCase("false"))) {
                         boolean requestedMonitorOnly = Boolean.parseBoolean(val);
                         synchronized (clientLock) {
+                            if (restartInProgress.get()) {
+                                sendError(t, 409, "Control mode cannot change during a restart");
+                                return;
+                            }
                             monitorOnly = requestedMonitorOnly;
                             if (requestedMonitorOnly) {
                                 staticRpmMode = false;
@@ -1178,19 +1259,33 @@ public class HumidityMonitor {
                 level = Integer.parseInt(levelStr);
                 durationMinutes = Integer.parseInt(durationStr);
             } catch (NumberFormatException e) {
-                // Ignore, use defaults
+                sendError(t, 400, "level and duration_minutes must be integers");
+                return;
             }
 
-            if (level < 0 || level > 4) level = NORMAL_SPEED;
-            if (durationMinutes < 1) durationMinutes = 30;
+            if (level < 0 || level > 4) {
+                sendError(t, 400, "level must be an integer from 0 to 4");
+                return;
+            }
+            if (durationMinutes < 1 || durationMinutes > MAX_MANUAL_OVERRIDE_MINUTES) {
+                sendError(t, 400, "duration_minutes must be from 1 to " + MAX_MANUAL_OVERRIDE_MINUTES);
+                return;
+            }
 
             try {
                 synchronized (clientLock) {
+                    if (restartInProgress.get()) {
+                        sendError(t, 409, "Fan control is unavailable during a restart");
+                        return;
+                    }
+                    if (monitorOnly) {
+                        sendError(t, 409, "Disable monitor-only mode before controlling the fan");
+                        return;
+                    }
                     setFanSpeedImmediately(level);
                     manualOverrideActive = true;
                     manualOverrideSpeed = level;
                     manualOverrideEndTime = System.currentTimeMillis() + (durationMinutes * 60L * 1000L);
-                    monitorOnly = false;
                     commandedFanSpeed = level;
                 }
             } catch (Exception e) {
@@ -1236,9 +1331,16 @@ public class HumidityMonitor {
                 
                 try {
                     synchronized (clientLock) {
+                        if (restartInProgress.get()) {
+                            sendError(t, 409, "Fan control is unavailable during a restart");
+                            return;
+                        }
                         if (requestedEnabled) {
+                            if (monitorOnly) {
+                                sendError(t, 409, "Disable monitor-only mode before controlling the fan");
+                                return;
+                            }
                             setFanSpeedImmediately(requestedSpeed);
-                            monitorOnly = false;
                             manualOverrideActive = false;
                             manualOverrideSpeed = -1;
                             manualOverrideEndTime = 0;
