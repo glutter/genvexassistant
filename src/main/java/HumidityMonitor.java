@@ -581,11 +581,12 @@ public class HumidityMonitor {
             double tempExhaust = rawTemperature(tempExhaustRaw, tempSensorOffsetRaw);
             double tempExtract = rawTemperature(tempExtractRaw, tempSensorOffsetRaw);
 
-            // Defrost Detection
-            boolean isDefrosting = false;
-            if (supplyRpm < 100 && extractRpm > 500 && tempSupply < 10.0) {
-                isDefrosting = true;
+            DefrostState defrostState = detectDefrostState(supplyRpm, extractRpm, tempSupply);
+            boolean isDefrosting = defrostState != DefrostState.INACTIVE;
+            if (defrostState == DefrostState.ACTIVE) {
                 log("STATUS: Unit appears to be in DEFROST/ANTI-ICE mode (Supply Off, Extract On, Low Temp).");
+            } else if (defrostState == DefrostState.UNKNOWN) {
+                log("STATUS: Defrost state unknown (Supply Off, Low Temp, Extract RPM unavailable). Fan writes paused.");
             }
 
             int observedFanSpeed = estimateFanSpeed(supplyRpm, supplyDuty);
@@ -643,6 +644,22 @@ public class HumidityMonitor {
             logError(label + " unavailable: " + e.getMessage());
             return -1;
         }
+    }
+
+    enum DefrostState {
+        INACTIVE,
+        ACTIVE,
+        UNKNOWN
+    }
+
+    static DefrostState detectDefrostState(int supplyRpm, int extractRpm, double supplyTemp) {
+        if (supplyRpm >= 100 || supplyTemp >= 10.0) {
+            return DefrostState.INACTIVE;
+        }
+        if (extractRpm < 0) {
+            return DefrostState.UNKNOWN;
+        }
+        return extractRpm > 500 ? DefrostState.ACTIVE : DefrostState.INACTIVE;
     }
 
     private ControlState controlStateSnapshot() {

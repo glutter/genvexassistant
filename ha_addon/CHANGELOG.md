@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.57
+
+- Treat defrost detection as active, inactive, or unknown instead of assuming missing extract-fan RPM means no defrost.
+- Pause automatic fan writes conservatively when the supply fan is stopped and cold while extract-fan RPM is unavailable.
+
 ## 1.56
 
 - Evaluate humidity rises immediately after control-critical readings, before polling optional telemetry.
