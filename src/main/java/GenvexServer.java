@@ -10,8 +10,8 @@ import java.util.Map;
 
 public class GenvexServer {
     private static final int PORT = 8080;
-    private static final String GENVEX_IP = "192.168.1.100";
-    private static final String EMAIL = "user@example.com";
+    private static final String GENVEX_IP = System.getenv().getOrDefault("GENVEX_IP", "192.168.1.100");
+    private static final String EMAIL = System.getenv().getOrDefault("GENVEX_EMAIL", "user@example.com");
     
     private static GenvexClient client;
 

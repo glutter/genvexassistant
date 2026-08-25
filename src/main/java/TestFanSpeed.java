@@ -4,7 +4,7 @@ import java.util.Arrays;
 
 public class TestFanSpeed {
     private static final int PORT = 5570;
-    private static final String HOST = "192.168.1.100";
+    private static final String HOST = System.getenv().getOrDefault("GENVEX_IP", "192.168.1.100");
     private static final byte U_DATA = 0x16;
     private static final byte U_CRYPT = 0x1e;
     private static final byte U_NOTIFY = 0x34;
