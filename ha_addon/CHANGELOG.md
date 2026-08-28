@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.71
+
+- Keep shower boost at its configured speed until humidity returns to the frozen pre-rise baseline, including at night.
+- Update and shorten project documentation.
+
 ## 1.70
 
 - Activate evening cooling only while the read-only bypass status confirms that the bypass is open.

@@ -59,21 +59,23 @@ class HumidityControlPolicyTest {
     @Test
     void nightSpeedIsLimitedWithoutALargeHumidityDelta() {
         assertEquals(2, HumidityMonitor.limitNightSpeed(3, true, 80,
-                Double.NaN, DEFAULT_POLICY));
+                Double.NaN, false, DEFAULT_POLICY));
         assertEquals(2, HumidityMonitor.limitNightSpeed(3, true, 53,
-                50.0, DEFAULT_POLICY));
+                50.0, false, DEFAULT_POLICY));
     }
 
     @Test
     void largeHumidityDeltaCanExceedNightLimit() {
         assertEquals(3, HumidityMonitor.limitNightSpeed(3, true, 54,
-                50.0, DEFAULT_POLICY));
+                50.0, false, DEFAULT_POLICY));
+        assertEquals(3, HumidityMonitor.limitNightSpeed(3, true, 50,
+                50.0, true, DEFAULT_POLICY));
     }
 
     @Test
     void nightLimitDoesNotApplyDuringTheDay() {
         assertEquals(3, HumidityMonitor.limitNightSpeed(3, false, 50,
-                Double.NaN, DEFAULT_POLICY));
+                Double.NaN, false, DEFAULT_POLICY));
     }
 
     @Test
@@ -89,13 +91,9 @@ class HumidityControlPolicyTest {
     }
 
     @Test
-        void humidityPhasesHavePredictableSpeeds() {
-        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(60, 50.0,
-            DEFAULT_POLICY, 0, HumidityMonitor.HumidityRecoveryPhase.BOOST));
-        assertEquals(2, HumidityMonitor.selectHumidityRecoverySpeed(60, 50.0,
-            DEFAULT_POLICY, 0, HumidityMonitor.HumidityRecoveryPhase.RECOVERY));
-        assertEquals(1, HumidityMonitor.selectHumidityRecoverySpeed(53, 50.0,
-            DEFAULT_POLICY, 0, HumidityMonitor.HumidityRecoveryPhase.RECOVERY));
+    void showerBoostKeepsFullSpeedUntilHumidityRecovers() {
+        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(60, DEFAULT_POLICY, 0));
+        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(53, DEFAULT_POLICY, 0));
     }
 
     @Test
@@ -105,13 +103,11 @@ class HumidityControlPolicyTest {
     }
 
     @Test
-    void recoveryNeverUndercutsAbsoluteHumidityProtection() {
-        assertEquals(2, HumidityMonitor.selectHumidityRecoverySpeed(65, 64.0,
-            DEFAULT_POLICY, 0, HumidityMonitor.HumidityRecoveryPhase.RECOVERY));
+    void showerBoostNeverUndercutsConfiguredOrAbsoluteProtection() {
+        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(65, DEFAULT_POLICY, 0));
         HumidityMonitor.HumidityPolicy limitedBoost =
             new HumidityMonitor.HumidityPolicy(4, 1, 2, 1, 30, 65, 80);
-        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(80, 78.0,
-            limitedBoost, 0, HumidityMonitor.HumidityRecoveryPhase.RECOVERY));
+        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(80, limitedBoost, 0));
     }
 
     @Test
@@ -131,30 +127,18 @@ class HumidityControlPolicyTest {
     }
 
     @Test
-    void boostStopsAtRiseThresholdInsteadOfHistoricalBaseline() {
-        long initialDurationEnd = 15 * 60 * 1000L;
-
-        assertFalse(HumidityMonitor.shouldDeactivateBoost(10 * 60 * 1000L, initialDurationEnd,
-            45, 45.0, DEFAULT_POLICY));
-        assertFalse(HumidityMonitor.shouldDeactivateBoost(initialDurationEnd + 1, initialDurationEnd,
-            50, 45.0, DEFAULT_POLICY));
-        assertTrue(HumidityMonitor.shouldDeactivateBoost(initialDurationEnd + 1, initialDurationEnd,
-            48, 45.0, DEFAULT_POLICY));
-        assertEquals(49.0, HumidityMonitor.humidityRecoveryTarget(46.0, DEFAULT_POLICY));
-        }
-
-    @Test
-    void pendingBoostCannotDeactivateBeforeFanControlStarts() {
-        assertFalse(HumidityMonitor.shouldDeactivateBoost(10_000, 0,
-                45, 45.0, DEFAULT_POLICY));
+    void showerBoostStopsOnlyAtItsFrozenPreRiseBaseline() {
+        assertFalse(HumidityMonitor.shouldDeactivateBoost(46, 45.0));
+        assertTrue(HumidityMonitor.shouldDeactivateBoost(45, 45.0));
+        assertTrue(HumidityMonitor.shouldDeactivateBoost(44, 45.0));
+        assertEquals(46.0, HumidityMonitor.humidityRecoveryTarget(46.0));
     }
 
     @Test
     void recoveryNeverLowersAnActiveCoolingTarget() {
-        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(47, 45.0,
-            DEFAULT_POLICY, 3, HumidityMonitor.HumidityRecoveryPhase.RECOVERY));
-        assertEquals(2, HumidityMonitor.selectHumidityRecoverySpeed(49, 45.0,
-            DEFAULT_POLICY, 2, HumidityMonitor.HumidityRecoveryPhase.RECOVERY));
+        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(47, DEFAULT_POLICY, 3));
+        assertEquals(2, HumidityMonitor.selectHumidityRecoverySpeed(49,
+            new HumidityMonitor.HumidityPolicy(4, 1, 2, 1, 30, 65, 80), 2));
         }
 
     @Test
@@ -187,7 +171,8 @@ class HumidityControlPolicyTest {
     void activeRecoveryCanBeSuspendedWithoutDiscardingItsPersistedState() {
         HumidityMonitor.ControlState active = new HumidityMonitor.ControlState(true, 45.0, 2_000L);
 
-        assertEquals(active, HumidityMonitor.restorableControlState(true, active));
+        assertEquals(new HumidityMonitor.ControlState(true, 45.0, 0),
+                HumidityMonitor.restorableControlState(true, active));
         assertFalse(HumidityMonitor.restorableControlState(false, active).boostActive());
     }
 
@@ -251,14 +236,6 @@ class HumidityControlPolicyTest {
             HumidityMonitor.validateControlConfiguration(4, 30, 1, 15 * 60_000L,
                 3, 1, 65, 30, 80));
         }
-
-    @Test
-    void legacyToleranceAboveRiseThresholdIsCapped() {
-        HumidityMonitor.HumidityPolicy legacyPolicy =
-                new HumidityMonitor.HumidityPolicy(4, 5, 3, 1, 30, 65, 80);
-
-        assertEquals(46.0, HumidityMonitor.humidityRecoveryTarget(46.0, legacyPolicy));
-    }
 
     @Test
     void rejectsUnsafeRuntimeConfiguration() {

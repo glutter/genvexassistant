@@ -1,13 +1,12 @@
 # Genvex Optima 270 (Model 2010) Address Map
 
-This document lists the known Micro Nabto addresses for the Genvex Optima 270 ventilation unit, verified via reverse engineering and testing.
+Verified Micro Nabto addresses used by this project.
 
 ## Control Setpoints (Write)
 
 | Function | Write Address | Values | Notes |
 |----------|---------------|--------|-------|
 | **Fan Speed** | **24** | `0` = Off<br>`1` = Speed 1 (~30%)<br>`2` = Speed 2 (~50%)<br>`3` = Speed 3<br>`4` = Speed 4 | Confirmed working. Writing to this address changes the fan speed immediately. |
-| **Mode** | *Unknown* | | Likely controls Auto/Cool/Heat modes. |
 
 ## Sensor Readings (Read)
 
@@ -24,17 +23,6 @@ This document lists the known Micro Nabto addresses for the Genvex Optima 270 ve
 | **Temp Extract** | **23** | °C ((Raw + offset) / 10) | Shared default offset is `-300`. |
 | **Humidity** | **26** | % | E.g., `58` = 58%. |
 | **Bypass Active** | **53** | Binary | `0` = closed; positive values are treated as active/open. Read-only status verified on the target unit; no write address is known. |
-
-## Other Potential Addresses (Unverified)
-
-Based on `optima270.py` reference:
-
-*   **Temp Frost Protection:** 24 (Read) - *Conflict with Fan Speed Write?*
-*   **Preheat PWM:** 41
-*   **Reheat PWM:** 42
-*   **Bypass Analog:** 40
-*   **Alarm:** 38
-*   **Rotor Speed:** 50
 
 ## Protocol Notes
 

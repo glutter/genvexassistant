@@ -93,7 +93,6 @@ public class HumidityMonitor {
     private boolean boostActive = false;
     private long boostEndTime = 0;
     private double boostBaselineHumidity = Double.NaN;
-    private boolean boostExtensionLogged = false;
     private int commandedFanSpeed = -1;
     private long lastFanCommandTime = 0;
     private int lastObservedFanSpeed = -1;
@@ -355,8 +354,8 @@ public class HumidityMonitor {
                 snapshot = new LiveSnapshot(lastHumidity, lastSupplyTemp, lastOutsideTemp, lastExhaustTemp,
                     lastExtractTemp, lastRpm, lastBypassState, lastObservedFanSpeed, commandedFanSpeed,
                     boostActive,
-                        humidityRecoveryTarget(boostBaselineHumidity, HUMIDITY_POLICY),
-                    isBoostExtended(boostActive, now, boostEndTime),
+                        humidityRecoveryTarget(boostBaselineHumidity),
+                    false,
                         eveningCoolingActive, eveningCoolingSpeed, staticRpmMode, staticRpmSpeed, monitorOnly,
                         manualOverrideActive && now < manualOverrideEndTime,
                         Math.max(0, (manualOverrideEndTime - now) / 1000),
@@ -705,13 +704,13 @@ public class HumidityMonitor {
         if (boostActive) {
             log(String.format(Locale.ROOT,
                 "Restored humidity recovery toward %.1f%% after restart.",
-                    humidityRecoveryTarget(boostBaselineHumidity, HUMIDITY_POLICY)));
+                    humidityRecoveryTarget(boostBaselineHumidity)));
         }
     }
 
     static ControlState restorableControlState(boolean boostEnabled, ControlState state) {
         if (boostEnabled && state.boostActive() && Double.isFinite(state.boostBaseline())) {
-            return state;
+            return new ControlState(true, state.boostBaseline(), 0);
         }
         return new ControlState(false, Double.NaN, 0);
     }
@@ -861,14 +860,10 @@ public class HumidityMonitor {
             reason = "Static RPM Mode";
         } else if (boostActive) {
             int coolingSpeed = selectEveningCoolingSpeed(tempSupply, tempOutside, tempExtract, bypassState, now);
-            long currentTime = System.currentTimeMillis();
-            boostEndTime = initializedBoostEndTime(boostEndTime, currentTime, BOOST_DURATION_MS);
-            HumidityRecoveryPhase phase = humidityRecoveryPhase(true, currentTime, boostEndTime);
-            targetSpeed = selectHumidityRecoverySpeed(humidity, boostBaselineHumidity,
-                        HUMIDITY_POLICY, coolingSpeed, phase);
+            targetSpeed = selectHumidityRecoverySpeed(humidity, HUMIDITY_POLICY, coolingSpeed);
             reason = String.format(Locale.ROOT, coolingSpeed > 0
-                ? "Humidity %s + Evening Cooling (delta %.1f%%)"
-                : "Humidity %s (delta %.1f%%)", phase, humidity - boostBaselineHumidity);
+                ? "Shower Boost + Evening Cooling (delta %.1f%%)"
+                : "Shower Boost (delta %.1f%%)", humidity - boostBaselineHumidity);
         } else {
             if (humidity >= HUMIDITY_VERY_HIGH_THRESHOLD) {
                 resetEveningCooling();
@@ -888,7 +883,7 @@ public class HumidityMonitor {
         int unrestrictedTargetSpeed = targetSpeed;
         if (automaticControl) {
             targetSpeed = limitNightSpeed(targetSpeed, isNightTime, humidity,
-                    boostBaselineHumidity, HUMIDITY_POLICY);
+                    boostBaselineHumidity, boostActive, HUMIDITY_POLICY);
             if (targetSpeed < unrestrictedTargetSpeed) {
                 reason += " + Night Noise Limit";
             }
@@ -955,8 +950,8 @@ public class HumidityMonitor {
     }
 
     static int limitNightSpeed(int targetSpeed, boolean night, int humidity,
-            double baselineHumidity, HumidityPolicy policy) {
-        if (!night || hasHumidityRise(humidity, baselineHumidity, policy)) {
+            double baselineHumidity, boolean showerBoostActive, HumidityPolicy policy) {
+        if (showerBoostActive || !night || hasHumidityRise(humidity, baselineHumidity, policy)) {
             return targetSpeed;
         }
         return Math.min(2, targetSpeed);
@@ -968,61 +963,30 @@ public class HumidityMonitor {
                 || (targetSpeed != observedFanSpeed && now - lastCommandTime >= retryIntervalMillis);
     }
 
-    enum HumidityRecoveryPhase {
-        INACTIVE,
-        BOOST,
-        RECOVERY
-    }
-
     record HumidityPolicy(int riseThreshold, int recoveryTolerance, int boostSpeed,
             int normalSpeed, int lowThreshold, int highThreshold, int veryHighThreshold) {}
 
-    static HumidityRecoveryPhase humidityRecoveryPhase(boolean active, long now,
-            long boostEndTime) {
-        if (!active) {
-            return HumidityRecoveryPhase.INACTIVE;
-        }
-        return now < boostEndTime ? HumidityRecoveryPhase.BOOST : HumidityRecoveryPhase.RECOVERY;
-    }
-
-    static long initializedBoostEndTime(long boostEndTime, long now, long boostDurationMillis) {
-        return boostEndTime > 0 ? boostEndTime : now + boostDurationMillis;
-    }
-
-    static boolean isBoostExtended(boolean boostActive, long now, long boostEndTime) {
-        return boostActive && boostEndTime > 0 && now >= boostEndTime;
-    }
-
-        static int selectHumidityRecoverySpeed(int humidity, double baselineHumidity,
-            HumidityPolicy policy, int coolingSpeed,
-            HumidityRecoveryPhase phase) {
-        int phaseSpeed = phase == HumidityRecoveryPhase.BOOST
-            ? Math.max(policy.normalSpeed(), policy.boostSpeed())
-            : humidity > humidityRecoveryTarget(baselineHumidity, policy)
-                ? Math.max(policy.normalSpeed(), Math.min(2, policy.boostSpeed()))
-                : policy.normalSpeed();
+    static int selectHumidityRecoverySpeed(int humidity, HumidityPolicy policy, int coolingSpeed) {
+        int boostSpeed = Math.max(policy.normalSpeed(), policy.boostSpeed());
         int absoluteHumiditySpeed = humidity >= policy.veryHighThreshold()
             ? Math.max(3, policy.normalSpeed())
             : selectHumiditySpeed(humidity, policy.lowThreshold(), policy.highThreshold(),
                 policy.normalSpeed());
-        return Math.max(coolingSpeed, Math.max(phaseSpeed, absoluteHumiditySpeed));
+        return Math.max(coolingSpeed, Math.max(boostSpeed, absoluteHumiditySpeed));
     }
 
-        static boolean hasHumidityRise(int humidity, double baselineHumidity, HumidityPolicy policy) {
+    static boolean hasHumidityRise(int humidity, double baselineHumidity, HumidityPolicy policy) {
         return Double.isFinite(baselineHumidity)
             && humidity - baselineHumidity >= policy.riseThreshold();
     }
 
-        static double humidityRecoveryTarget(double baselineHumidity, HumidityPolicy policy) {
-            int effectiveTolerance = Math.min(policy.recoveryTolerance(), policy.riseThreshold());
-        return baselineHumidity
-                + policy.riseThreshold() - effectiveTolerance;
+    static double humidityRecoveryTarget(double baselineHumidity) {
+        return baselineHumidity;
     }
 
-    static boolean shouldDeactivateBoost(long now, long minimumEndTime, int humidity,
-            double baselineHumidity, HumidityPolicy policy) {
-        return minimumEndTime > 0 && now >= minimumEndTime && Double.isFinite(baselineHumidity)
-            && humidity <= humidityRecoveryTarget(baselineHumidity, policy);
+    static boolean shouldDeactivateBoost(int humidity, double baselineHumidity) {
+        return Double.isFinite(baselineHumidity)
+            && humidity <= humidityRecoveryTarget(baselineHumidity);
     }
 
     static double historicalHumidityAverage(Connection connection, Instant endExclusive,
@@ -1248,28 +1212,20 @@ public class HumidityMonitor {
                 return;
             }
 
-                double baselineHumidity = Double.isFinite(historicalHumidityAverage)
+            double baselineHumidity = Double.isFinite(historicalHumidityAverage)
                     ? historicalHumidityAverage : lastHumidity;
             if (hasHumidityRise(currentHumidity, baselineHumidity, HUMIDITY_POLICY)) {
                 log(String.format(Locale.ROOT,
-                        "Humidity rise detected (%d%% current, historical average %.1f%%). Activating recovery.",
+                        "Humidity rise detected (%d%% current, pre-rise baseline %.1f%%). Activating boost.",
                         currentHumidity, baselineHumidity));
                 activateBoost(currentHumidity, baselineHumidity);
             }
         } else {
-            if (shouldDeactivateBoost(now, boostEndTime, currentHumidity,
-                    boostBaselineHumidity, HUMIDITY_POLICY)) {
+            if (shouldDeactivateBoost(currentHumidity, boostBaselineHumidity)) {
                 log(String.format(Locale.ROOT,
                         "Humidity recovered (%d%%, recovery target %.1f%%). Deactivating Boost.",
-                        currentHumidity, humidityRecoveryTarget(boostBaselineHumidity,
-                                HUMIDITY_POLICY)));
+                        currentHumidity, humidityRecoveryTarget(boostBaselineHumidity)));
                 deactivateBoost();
-            } else if (isBoostExtended(true, now, boostEndTime) && !boostExtensionLogged) {
-                boostExtensionLogged = true;
-                log(String.format(Locale.ROOT,
-                    "Boost phase complete; continuing recovery at %d%% toward %.1f%%.",
-                    currentHumidity, humidityRecoveryTarget(boostBaselineHumidity,
-                        HUMIDITY_POLICY)));
             }
         }
     }
@@ -1277,17 +1233,16 @@ public class HumidityMonitor {
     private void activateBoost(int activationHumidity, double baselineHumidity) {
         boostActive = true;
         boostBaselineHumidity = baselineHumidity;
-        boostExtensionLogged = false;
         boostEndTime = 0;
         log(String.format(Locale.ROOT,
-            "Boost activated at %d%% humidity with %.1f%% recovery baseline. Boost phase: %d min.",
-            activationHumidity, baselineHumidity, BOOST_DURATION_MS / 60000));
+            "Shower boost activated at %d%% humidity; maintaining boost until humidity returns to %.1f%%.",
+            activationHumidity, baselineHumidity));
     }
 
     private void deactivateBoost() {
         boostActive = false;
         boostBaselineHumidity = Double.NaN;
-        boostExtensionLogged = false;
+        boostEndTime = 0;
         // Speed change will be handled by updateFanSpeed()
     }
 

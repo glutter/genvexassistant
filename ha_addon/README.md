@@ -4,7 +4,7 @@ This add-on runs the Java-based Genvex Ventilation Monitor.
 
 ## Installation
 
-### Option 1: Add Repository (Recommended)
+### Add Repository
 
 1. Go to **Settings > Add-ons > Add-on Store** in Home Assistant.
 2. Click the **three dots** (⋮) in the top right corner.
@@ -13,13 +13,9 @@ This add-on runs the Java-based Genvex Ventilation Monitor.
 5. Click **Add** and then **Close**.
 6. Search for "Genvex Humidity Monitor" and click **Install**.
 
-With this method, Home Assistant will automatically notify you when updates are available!
+### Manual Installation
 
-### Option 2: Manual Installation
-
-1. Copy the `ha_addon` folder to the `/addons/local/` directory on your Home Assistant instance.
-   - You can use the Samba Share add-on or SSH to do this.
-   - The path should look like `/addons/local/genvex_monitor`.
+1. Copy `ha_addon` to `/addons/local/genvex_monitor` using SSH or Samba.
 2. Go to **Settings > Add-ons > Add-on Store**.
 3. Click the **three dots** in the top right corner and select **Check for updates**.
 4. You should see "Genvex Humidity Monitor" under the "Local Add-ons" section.
@@ -29,70 +25,29 @@ With this method, Home Assistant will automatically notify you when updates are 
 
 Before starting, configure the add-on in the **Configuration** tab:
 
-**Required Settings:**
+**Required:**
 - `genvex_ip`: The IP address of your Genvex unit (e.g., `192.168.1.100`).
 - `genvex_email`: The email address registered with the Genvex unit.
 
-**Optional Settings:**
-- `poll_interval`: How often to read data in seconds (default: 30).
-- `boost_enabled`: Enable/Disable automatic fan boost on humidity rise.
-- `humidity_rise_threshold`: Rise above the rolling historical average that starts a humidity boost (default: 4 percentage points).
-- `boost_speed`: Fan speed used during the initial confirmed-spike phase; recovery subsequently uses at most speed 2 unless absolute humidity protection or cooling requires more (default: 3).
-- `normal_speed`: Fan speed level between the low and high humidity thresholds (default: 1).
-- `monitor_only`: Disable automatic fan writes for passive monitoring (default: false).
-- `boost_duration_minutes`: Duration of the full-speed BOOST phase; speed-2 RECOVERY continues afterward while humidity remains elevated (default: 15).
-- `humidity_baseline_minutes`: Historical window used to calculate the rolling humidity baseline (default: 30).
-- `humidity_recovery_tolerance`: Hysteresis below the rise threshold before recovery ends. With defaults, boost starts at baseline +4 and recovery ends at baseline +3; larger legacy values are capped at the rise threshold (default: 1).
-- `humidity_high_threshold`: Humidity level to trigger high speed (default: 65).
-- `humidity_low_threshold`: Humidity level at or below which speed 1 is used (default: 30).
-- `night_start`: Start time for night mode (HH:mm, default: 22:00).
-- `night_end`: End time for night mode (HH:mm, default: 06:30).
-- `temp_supply_offset_raw`: Shared calibration offset for supply, outside, exhaust, and extract temperatures (legacy option name; raw value, default: -300).
-- `evening_cooling_enabled`: Enables cooling with cooler outside air after sunset (default: true).
-- `cooling_stop_temp`: Indoor/extract temperature where cooling stops in °C (default: 22.0).
-- `cooling_start_temp`: Indoor/extract temperature where cooling starts in °C (default: 22.5; must not be lower than `cooling_stop_temp`).
-- `cooling_min_supply_temp`: Minimum supply temperature allowed for cooling in °C (default: 15.0).
-- `cooling_fallback_start`: Cooling start when Home Assistant sunset state is unavailable (default: 18:00).
-- `cooling_escalation_minutes`: Minutes without meaningful delta improvement before speed 3 (default: 30).
+**Behavior:**
+- A humidity rise above the rolling baseline starts shower boost at `boost_speed` until humidity returns to that frozen baseline.
+- `monitor_only` disables writes. Static and manual controls override automatic control.
+- Evening cooling requires an open bypass and suitable temperatures; normal humidity/night control resumes when it ends.
+- `boost_duration_minutes` and `humidity_recovery_tolerance` are accepted only for upgrade compatibility.
 
-When indoor air remains warm and outside/supply air can cool it, evening cooling overrides quiet night speed. It requires a confirmed open bypass, at least 10 C outside, and at least 21 C indoors. It starts at speed 2, may escalate to speed 3 after the configured progress interval, and returns to speed 1 when cooling is no longer useful.
-
-The dashboard also records and displays the unit's bypass open/closed status. This is read-only telemetry: evening cooling controls fan speed, while the Genvex controller itself decides whether to open the bypass.
+All optional settings and defaults are shown in the Configuration tab and defined in `config.json`.
 
 ## Database
 
-This add-on uses an internal SQLite database to store history. No external database configuration is required.
-The database is stored in `/data/genvex.db` and persists across restarts. It includes humidity, temperatures, fan activity, and bypass open/closed history.
+History and active shower state persist in `/data/genvex.db`.
 
 ## Dashboard
 
-Once running, you can access the dashboard by clicking **OPEN WEB UI** in the add-on page (via Home Assistant Ingress).
-
-You can also access it directly at `http://<HA_IP>:8081` if you have mapped the port in the configuration.
-
-## Adding to Home Assistant Overview
-
-You can embed the custom dashboard directly into your Home Assistant Overview using a **Webpage Card**.
-
-1. Go to your Dashboard and click **Edit Dashboard** (pencil icon).
-2. Click **Add Card**.
-3. Search for and select **Webpage**.
-4. In the **URL** field, enter: `http://<YOUR_HA_IP>:8081` (e.g., `http://192.168.0.100:8081`).
-
-## Troubleshooting
-
-### Update not showing up?
-
-If you have updated the files in `/addons/local/genvex_monitor` but do not see an "Update" button in Home Assistant:
-
-1. Go to **Settings > Add-ons > Add-on Store**.
-2. Click the **three dots** (top right) and select **Check for updates**.
-3. If that doesn't work, try restarting Home Assistant.
-4. As a last resort, uninstall the add-on and install it again (your configuration should be preserved if you don't delete the add-on data, but backing up configuration is recommended).
+Open **OPEN WEB UI** in the add-on page, or use `http://<HA_IP>:8081` when the port is mapped. It can also be embedded in a Home Assistant Webpage card.
 
 ## Home Assistant Sensors
 
-The add-on exports sensors to Home Assistant. You can use the standard **History Graph** card with these entities:
+The add-on exports:
 - `sensor.genvex_humidity`
 - `sensor.genvex_temp_supply`
 - `sensor.genvex_temp_outside`
