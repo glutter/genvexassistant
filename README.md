@@ -2,6 +2,10 @@
 
 A Java 17/Maven service for monitoring and controlling Genvex Optima 270/2010 ventilation systems over Micro Nabto (UDP 5570).
 
+## Dashboard
+
+![Genvex Assistant mobile dashboard](Screenshot%202026-08-17%20at%2022.28.32.png)
+
 ## Features
 
 - Polls humidity, temperatures, fan state, and bypass state every 30 seconds by default.
