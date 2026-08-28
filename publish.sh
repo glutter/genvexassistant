@@ -30,7 +30,7 @@ cp "target/genvex-integration-${VERSION}.jar" ha_addon/app.jar
 
 # 4. Git operations
 echo "Staging files for commit..."
-git add ADDRESS_MAP.md README.md demo_image.png "Screenshot 2026-08-17 at 22.28.32.png" publish.sh pom.xml src/ \
+git add ADDRESS_MAP.md README.md publish.sh pom.xml src/ \
     ha_addon/app.jar ha_addon/config.json ha_addon/run.sh \
     ha_addon/README.md ha_addon/CHANGELOG.md
 

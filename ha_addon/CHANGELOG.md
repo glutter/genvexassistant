@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.72
+
+- Remove committed household telemetry, device identifiers, and connection-identity logging.
+- Rebuild release history and artifacts without personal defaults.
+
 ## 1.71
 
 - Keep shower boost at its configured speed until humidity returns to the frozen pre-rise baseline, including at night.
