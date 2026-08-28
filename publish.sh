@@ -30,9 +30,10 @@ cp "target/genvex-integration-${VERSION}.jar" ha_addon/app.jar
 
 # 4. Git operations
 echo "Staging files for commit..."
-git add ADDRESS_MAP.md README.md publish.sh pom.xml src/ \
-    ha_addon/app.jar ha_addon/config.json ha_addon/run.sh \
-    ha_addon/README.md ha_addon/CHANGELOG.md
+git add ADDRESS_MAP.md README.md repository.json publish.sh pom.xml src/ \
+    demo_image.png "Screenshot 2026-08-17 at 22.28.32.png" \
+    ha_addon/app.jar ha_addon/config.json ha_addon/Dockerfile \
+    ha_addon/run.sh ha_addon/README.md ha_addon/CHANGELOG.md
 
 # Prompt user to confirm and commit
 echo "Checking git status..."
@@ -42,20 +43,24 @@ read -p "Do you want to commit these changes and push to GitHub? (y/N) " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     # Create commit
-    git commit -m "Build and release package v${VERSION} locally" || echo "No changes to commit"
+    if git diff --cached --quiet; then
+        echo "No changes to commit"
+    else
+        git commit -m "Build and release package v${VERSION} locally"
+    fi
     
     # Push to main
     echo "Pushing to GitHub..."
-    git push origin main
+    git push origin HEAD:main
     
     # Optionally tag the release locally and push the tag
     read -p "Do you want to create and push git tag v${VERSION}? (y/N) " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        # Delete tag if it already exists locally and remotely to overwrite
-        git tag -d "v${VERSION}" 2>/dev/null || true
-        git push --delete origin "v${VERSION}" 2>/dev/null || true
-        
+        if git rev-parse --verify "refs/tags/v${VERSION}" >/dev/null 2>&1; then
+            echo "Error: tag v${VERSION} already exists"
+            exit 1
+        fi
         git tag -a "v${VERSION}" -m "Release v${VERSION}"
         git push origin "v${VERSION}"
         echo "Tag v${VERSION} pushed successfully!"

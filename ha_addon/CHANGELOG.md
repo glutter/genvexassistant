@@ -4,6 +4,7 @@
 
 - Remove committed household telemetry, device identifiers, and connection-identity logging.
 - Rebuild release history and artifacts without personal defaults.
+- Make local publishing fail safely and include every release input.
 
 ## 1.71
 
