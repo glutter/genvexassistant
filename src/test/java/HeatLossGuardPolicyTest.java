@@ -79,6 +79,37 @@ class HeatLossGuardPolicyTest {
     }
 
     @Test
+    void oneCountOfSensorFlickerCannotCostASpeedWithoutAScoredProbe() {
+        // At 20.6 C an integer humidity count is 0.154 g/kg, so the 0.3 g/kg peak margin is 1.95 counts wide
+        // and its boundary always lands between the peak reading and the one two below it. A single count of
+        // flicker therefore crosses the margin in both directions. Cancelling the in-flight probe on the way
+        // back in used to hand transition 7 a fresh step-down on the way back out: two speeds gone in 90
+        // seconds with no window ever scored, and then the floor for the rest of the event.
+        HeatLossGuardPolicy.HeatLossState state = step(IDLE, 3, 72, moistureAt(72), T0);
+        assertEquals(0, state.stepDown(), "the peak itself gets the full target");
+
+        state = step(state, 3, 70, moistureAt(70), T0 + POLL);
+        assertEquals(1, state.stepDown(), "clear of the margin, so one speed is taken and observed");
+        long probeStart = state.probeStartTime();
+        assertTrue(state.probing());
+
+        state = step(state, 3, 71, moistureAt(71), T0 + 2 * POLL);
+        assertEquals(1, state.stepDown(), "back inside the margin holds the step");
+        assertEquals(probeStart, state.probeStartTime(), "and the probe survives the flicker");
+
+        state = step(state, 3, 70, moistureAt(70), T0 + 3 * POLL);
+        assertEquals(1, state.stepDown(), "no second speed is taken without a scored window");
+        assertEquals(probeStart, state.probeStartTime(), "the original probe is still the one running");
+        assertEquals(2, HeatLossGuardPolicy.guardedSpeed(3, 0, state, CONFIG));
+
+        // The window it kept is scored on its own deadline, and a plateau scores as the stall it is.
+        state = step(state, 3, 70, moistureAt(70), T0 + POLL + PROBE);
+        assertEquals(0, state.stepDown(), "flat moisture over the whole window gives the speed back");
+        assertTrue(state.holding(), "and holds there until the air dries unaided");
+        assertEquals(3, HeatLossGuardPolicy.guardedSpeed(3, 0, state, CONFIG));
+    }
+
+    @Test
     void aSecondShowerGetsTheFullTargetBackImmediately() {
         HeatLossGuardPolicy.HeatLossState state = step(IDLE, 3, 78, 11.80, T0);
         state = step(state, 3, 77, 11.45, T0 + POLL);
@@ -353,6 +384,11 @@ class HeatLossGuardPolicyTest {
             int policyTarget) {
         HeatLossGuardPolicy.HeatLossState seeded = step(IDLE, policyTarget, 69, peak, T0);
         return step(seeded, policyTarget, 69, atProbeStart, T0 + PROBE);
+    }
+
+    /** What the unit's integer humidity reading is actually worth in g/kg at the observed indoor temperature. */
+    private static double moistureAt(int humidityPct) {
+        return HumidityPhysics.mixingRatioGramsPerKg(humidityPct, INDOOR_C);
     }
 
     /** The pre-guard policy target, through the real threshold chain, as {@code updateFanSpeed} computes it. */
