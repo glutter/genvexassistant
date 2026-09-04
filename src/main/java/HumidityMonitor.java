@@ -69,6 +69,31 @@ public class HumidityMonitor {
     private static final LocalTime NIGHT_START = LocalTime.parse(System.getenv().getOrDefault("NIGHT_START", "22:00"));
     private static final LocalTime NIGHT_END = LocalTime.parse(System.getenv().getOrDefault("NIGHT_END", "06:30"));
 
+    // Fan Command Pacing (anti-oscillation)
+    private static final int HUMIDITY_HYSTERESIS = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_HYSTERESIS", "3"));
+    private static final FanCommandPacing FAN_PACING = new FanCommandPacing(
+            Integer.parseInt(System.getenv().getOrDefault("FAN_MIN_COMMAND_INTERVAL_SECONDS", "120")) * 1000L,
+            Integer.parseInt(System.getenv().getOrDefault("FAN_RETRY_INTERVAL_SECONDS", "120")) * 1000L,
+            Integer.parseInt(System.getenv().getOrDefault("FAN_MAX_RETRY_INTERVAL_SECONDS", "1800")) * 1000L,
+            Integer.parseInt(System.getenv().getOrDefault("FAN_RETRY_ATTEMPTS_BEFORE_BACKOFF", "3")));
+    private static final int BYPASS_UNKNOWN_TOLERANCE = Integer.parseInt(System.getenv().getOrDefault("BYPASS_UNKNOWN_TOLERANCE", "3"));
+
+    // Heat Loss Guard Configuration (adaptive step-down while the house is losing heat)
+    private static final boolean HEAT_LOSS_GUARD_ENABLED = Boolean.parseBoolean(System.getenv().getOrDefault("HEAT_LOSS_GUARD_ENABLED", "true"));
+    private static final double HEAT_LOSS_INDOOR_TEMP_C = Double.parseDouble(System.getenv().getOrDefault("HEAT_LOSS_INDOOR_TEMP_C", "23.0"));
+    private static final double HEAT_LOSS_TEMP_DELTA_C = Double.parseDouble(System.getenv().getOrDefault("HEAT_LOSS_TEMP_DELTA_C", "5.0"));
+    private static final long HEAT_LOSS_PROBE_MS = Integer.parseInt(System.getenv().getOrDefault("HEAT_LOSS_PROBE_MINUTES", "10")) * 60 * 1000L;
+    private static final double HEAT_LOSS_PROGRESS_G_PER_KG = Double.parseDouble(System.getenv().getOrDefault("HEAT_LOSS_PROGRESS_G_PER_KG", "0.15"));
+    private static final double HEAT_LOSS_PEAK_MARGIN_G_PER_KG = Double.parseDouble(System.getenv().getOrDefault("HEAT_LOSS_PEAK_MARGIN_G_PER_KG", "0.3"));
+    private static final int HEAT_LOSS_OVERRIDE_HUMIDITY = Integer.parseInt(System.getenv().getOrDefault(
+            "HEAT_LOSS_OVERRIDE_HUMIDITY", String.valueOf(HUMIDITY_VERY_HIGH_THRESHOLD)));
+    // The floor is never below speed 1: the humidity policy may legally command 0, but a heat-loss limiter
+    // must not be the thing that stops ventilation. With the floor at 1 a target of 0 simply disarms it.
+    private static final HeatLossGuardPolicy.HeatLossGuardConfig HEAT_LOSS_CONFIG =
+            new HeatLossGuardPolicy.HeatLossGuardConfig(HEAT_LOSS_GUARD_ENABLED, HEAT_LOSS_INDOOR_TEMP_C,
+                    HEAT_LOSS_TEMP_DELTA_C, HEAT_LOSS_PROBE_MS, HEAT_LOSS_PROGRESS_G_PER_KG,
+                    HEAT_LOSS_PEAK_MARGIN_G_PER_KG, HEAT_LOSS_OVERRIDE_HUMIDITY, Math.max(1, NORMAL_SPEED));
+
     // Evening Cooling Configuration
     private static final boolean EVENING_COOLING_ENABLED = Boolean.parseBoolean(System.getenv().getOrDefault("EVENING_COOLING_ENABLED", "true"));
     private static final double COOLING_STOP_TEMP = Double.parseDouble(System.getenv().getOrDefault(
@@ -90,12 +115,25 @@ public class HumidityMonitor {
     private double lastExtractTemp = -1.0;
     private int lastRpm = -1;
     private int lastBypassState = -1;
+    private int lastKnownBypassState = -1;
+    private int unknownBypassReads = 0;
     private boolean boostActive = false;
     private long boostEndTime = 0;
     private double boostBaselineHumidity = Double.NaN;
+    // Mixing-ratio twin of boostBaselineHumidity, deliberately NOT persisted: the boost_baseline column stays
+    // a relative humidity so an older binary can still read it. A boost restored from disk therefore has a
+    // NaN moisture baseline and exits on the legacy relative-humidity comparison instead.
+    private double boostBaselineMoisture = Double.NaN;
     private int commandedFanSpeed = -1;
+    // The speed humidity control asked for, before the heat-loss guard limited it. Kept apart from
+    // commandedFanSpeed because it is the hysteresis latch: feeding the guard's own reduced write back in
+    // would let the guard erode the target it measures against, one deadband at a time.
+    private int policyTargetSpeed = -1;
     private long lastFanCommandTime = 0;
     private int lastObservedFanSpeed = -1;
+    private int fanCommandAttempts = 0;
+    private boolean setpointReadbackUnavailableLogged = false;
+    private boolean setpointReadbackAvailable = false;
     private int dbErrorCount = 0;
     // Manual override (Udluftning)
     private volatile boolean manualOverrideActive = false;
@@ -106,6 +144,7 @@ public class HumidityMonitor {
     private volatile int staticRpmSpeed = 2;
     private boolean eveningCoolingActive = false;
     private int eveningCoolingSpeed = 0;
+    private HeatLossGuardPolicy.HeatLossState heatLossState = HeatLossGuardPolicy.HeatLossState.IDLE;
     private double coolingBaselineIndoorTemp = Double.NaN;
     private long coolingBaselineTime = 0;
     private long lastSunStateCheck = 0;
@@ -122,6 +161,9 @@ public class HumidityMonitor {
                 HUMIDITY_LOW_THRESHOLD, HUMIDITY_HIGH_THRESHOLD, HUMIDITY_VERY_HIGH_THRESHOLD);
         validateRuntimeConfiguration(POLL_INTERVAL, COOLING_ESCALATION_MS, NIGHT_START, NIGHT_END,
                 COOLING_START_TEMP, COOLING_STOP_TEMP, COOLING_MIN_SUPPLY_TEMP);
+        validateFanPacingConfiguration(FAN_PACING, HUMIDITY_HYSTERESIS, HUMIDITY_LOW_THRESHOLD,
+                HUMIDITY_HIGH_THRESHOLD);
+        validateHeatLossConfiguration(HEAT_LOSS_CONFIG);
 
         // Initialize Database
         initializeDatabase();
@@ -185,6 +227,51 @@ public class HumidityMonitor {
         }
     }
 
+    static void validateFanPacingConfiguration(FanCommandPacing pacing, int humidityHysteresis,
+            int lowThreshold, int highThreshold) {
+        if (pacing.minIntervalMillis() <= 0) {
+            throw new IllegalArgumentException("FAN_MIN_COMMAND_INTERVAL_SECONDS must be positive");
+        }
+        if (pacing.retryIntervalMillis() <= 0) {
+            throw new IllegalArgumentException("FAN_RETRY_INTERVAL_SECONDS must be positive");
+        }
+        if (pacing.maxRetryIntervalMillis() < pacing.retryIntervalMillis()) {
+            throw new IllegalArgumentException(
+                    "FAN_MAX_RETRY_INTERVAL_SECONDS must be at least FAN_RETRY_INTERVAL_SECONDS");
+        }
+        if (pacing.attemptsBeforeBackoff() < 1) {
+            throw new IllegalArgumentException("FAN_RETRY_ATTEMPTS_BEFORE_BACKOFF must be positive");
+        }
+        if (humidityHysteresis < 0 || humidityHysteresis >= highThreshold - lowThreshold) {
+            throw new IllegalArgumentException(
+                    "HUMIDITY_HYSTERESIS must be from 0 to the gap between the humidity thresholds");
+        }
+    }
+
+    static void validateHeatLossConfiguration(HeatLossGuardPolicy.HeatLossGuardConfig config) {
+        if (!Double.isFinite(config.indoorCeilingC())) {
+            throw new IllegalArgumentException("HEAT_LOSS_INDOOR_TEMP_C must be finite");
+        }
+        if (!Double.isFinite(config.tempDeltaC()) || config.tempDeltaC() <= 0) {
+            throw new IllegalArgumentException("HEAT_LOSS_TEMP_DELTA_C must be positive");
+        }
+        if (config.probeWindowMillis() <= 0) {
+            throw new IllegalArgumentException("HEAT_LOSS_PROBE_MINUTES must be positive");
+        }
+        if (!Double.isFinite(config.progressGramsPerKg()) || config.progressGramsPerKg() <= 0) {
+            throw new IllegalArgumentException("HEAT_LOSS_PROGRESS_G_PER_KG must be positive");
+        }
+        if (!Double.isFinite(config.peakMarginGramsPerKg()) || config.peakMarginGramsPerKg() <= 0) {
+            throw new IllegalArgumentException("HEAT_LOSS_PEAK_MARGIN_G_PER_KG must be positive");
+        }
+        if (config.overrideHumidityPct() < 0 || config.overrideHumidityPct() > 100) {
+            throw new IllegalArgumentException("HEAT_LOSS_OVERRIDE_HUMIDITY must be from 0 to 100");
+        }
+        if (config.floorSpeed() < 1 || config.floorSpeed() > 4) {
+            throw new IllegalArgumentException("Heat loss guard floor speed must be from 1 to 4");
+        }
+    }
+
     private void initializeDatabase() {
         String sql = "CREATE TABLE IF NOT EXISTS humidity_readings (" +
                      "timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, " +
@@ -195,7 +282,9 @@ public class HumidityMonitor {
                      "temp_extract REAL, " +
                      "fan_rpm INTEGER, " +
                      "fan_speed_level INTEGER, " +
-                     "bypass_open INTEGER)";
+                     "bypass_open INTEGER, " +
+                     "commanded_speed INTEGER, " +
+                     "supply_duty INTEGER)";
         
         try (Connection conn = DriverManager.getConnection(DB_URL);
              Statement stmt = conn.createStatement()) {
@@ -216,6 +305,8 @@ public class HumidityMonitor {
         addColumnIfMissing(conn, "temp_extract", "REAL");
         addColumnIfMissing(conn, "fan_speed_level", "INTEGER");
         addColumnIfMissing(conn, "bypass_open", "INTEGER");
+        addColumnIfMissing(conn, "commanded_speed", "INTEGER");
+        addColumnIfMissing(conn, "supply_duty", "INTEGER");
         try (Statement stmt = conn.createStatement()) {
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_humidity_timestamp ON humidity_readings(timestamp)");
         }
@@ -359,11 +450,12 @@ public class HumidityMonitor {
                         eveningCoolingActive, eveningCoolingSpeed, staticRpmMode, staticRpmSpeed, monitorOnly,
                         manualOverrideActive && now < manualOverrideEndTime,
                         Math.max(0, (manualOverrideEndTime - now) / 1000),
-                        Math.max(0, (boostEndTime - now) / 1000));
+                        Math.max(0, (boostEndTime - now) / 1000),
+                        heatLossState.stepDown() > 0, heatLossState.stepDown());
             }
 
             String json = String.format(Locale.ROOT,
-                "{\"humidity\":%d, \"temp\":%s, \"temp_supply\":%s, \"temp_outside\":%s, \"temp_exhaust\":%s, \"temp_extract\":%s, \"rpm\":%d, \"bypass_open\":%s, \"fan_speed\":%d, \"commanded_speed\":%d, \"boost\":%b, \"boost_recovery_target\":%s, \"boost_extended\":%b, \"evening_cooling\":%b, \"evening_cooling_speed\":%d, \"static_mode\":%b, \"static_speed\":%d, \"monitor_only\":%b, \"manual_override_active\":%b, \"manual_override_secs_left\":%d, \"boost_secs_left\":%d}",
+                "{\"humidity\":%d, \"temp\":%s, \"temp_supply\":%s, \"temp_outside\":%s, \"temp_exhaust\":%s, \"temp_extract\":%s, \"rpm\":%d, \"bypass_open\":%s, \"fan_speed\":%d, \"commanded_speed\":%d, \"boost\":%b, \"boost_recovery_target\":%s, \"boost_extended\":%b, \"evening_cooling\":%b, \"evening_cooling_speed\":%d, \"static_mode\":%b, \"static_speed\":%d, \"monitor_only\":%b, \"manual_override_active\":%b, \"manual_override_secs_left\":%d, \"boost_secs_left\":%d, \"heat_loss_guard\":%b, \"heat_loss_step_down\":%d}",
                 snapshot.humidity(), jsonTemperature(snapshot.tempSupply()), jsonTemperature(snapshot.tempSupply()),
                 jsonTemperature(snapshot.tempOutside()), jsonTemperature(snapshot.tempExhaust()),
                 jsonTemperature(snapshot.tempExtract()), snapshot.rpm(), jsonBypassState(snapshot.bypassState()),
@@ -372,7 +464,8 @@ public class HumidityMonitor {
                 jsonTemperature(snapshot.boostRecoveryTarget()), snapshot.boostExtended(),
                 snapshot.eveningCoolingActive(),
                 snapshot.eveningCoolingSpeed(), snapshot.staticMode(), snapshot.staticSpeed(), snapshot.monitorOnly(),
-                snapshot.manualOverrideActive(), snapshot.manualOverrideSecsLeft(), snapshot.boostSecsLeft()
+                snapshot.manualOverrideActive(), snapshot.manualOverrideSecsLeft(), snapshot.boostSecsLeft(),
+                snapshot.heatLossGuardActive(), snapshot.heatLossStepDown()
             );
             sendJson(t, json);
         }
@@ -383,7 +476,8 @@ public class HumidityMonitor {
             boolean boostActive,
             double boostRecoveryTarget, boolean boostExtended,
             boolean eveningCoolingActive, int eveningCoolingSpeed, boolean staticMode, int staticSpeed,
-            boolean monitorOnly, boolean manualOverrideActive, long manualOverrideSecsLeft, long boostSecsLeft) {}
+            boolean monitorOnly, boolean manualOverrideActive, long manualOverrideSecsLeft, long boostSecsLeft,
+            boolean heatLossGuardActive, int heatLossStepDown) {}
 
     static class StaticFileHandler implements HttpHandler {
         @Override
@@ -488,13 +582,16 @@ public class HumidityMonitor {
                     String tempExtract = nullableJsonNumber(rs, "temp_extract");
                     String fanSpeed = nullableJsonInteger(rs, "fan_speed_level");
                     String bypassOpen = nullableJsonBypassState(rs, "bypass_open");
+                    String commandedSpeed = nullableJsonInteger(rs, "commanded_speed");
+                    String supplyDuty = nullableJsonInteger(rs, "supply_duty");
 
                     json.append(String.format(Locale.ROOT,
                         "{\"timestamp\":\"%s\", \"humidity\":%d, \"temp\":%s, \"temp_supply\":%s, " +
                         "\"temp_outside\":%s, \"temp_exhaust\":%s, \"temp_extract\":%s, " +
-                        "\"rpm\":%d, \"fan_speed\":%s, \"bypass_open\":%s}",
+                        "\"rpm\":%d, \"fan_speed\":%s, \"bypass_open\":%s, " +
+                        "\"commanded_speed\":%s, \"supply_duty\":%s}",
                         ts, humidity, tempSupply, tempSupply, tempOutside, tempExhaust, tempExtract, rpm,
-                        fanSpeed, bypassOpen
+                        fanSpeed, bypassOpen, commandedSpeed, supplyDuty
                     ));
                 }
 
@@ -511,7 +608,7 @@ public class HumidityMonitor {
 
             static String historyQuery(String timeFilter, int bucketSeconds) {
                 String columns = "timestamp, humidity, temp_supply, temp_outside, temp_exhaust, temp_extract, "
-                    + "fan_rpm, fan_speed_level, bypass_open";
+                    + "fan_rpm, fan_speed_level, bypass_open, commanded_speed, supply_duty";
                 String filtered = " FROM humidity_readings WHERE timestamp >= datetime('now', '" + timeFilter + "')";
                 if (bucketSeconds <= 0) {
                 return "SELECT strftime('%Y-%m-%dT%H:%M:%SZ', timestamp) AS timestamp_utc, "
@@ -544,10 +641,10 @@ public class HumidityMonitor {
 
     private void pollAndStore() {
         refreshSunStateIfNeeded();
-        double historicalHumidityAverage = loadHistoricalHumidityAverage(Instant.now());
+        HistoricalBaselines baselines = loadHistoricalBaselines(Instant.now());
         PollResult result;
         synchronized (clientLock) {
-            result = pollWithFreshConnection(historicalHumidityAverage);
+            result = pollWithFreshConnection(baselines);
         }
         if (result == null) {
             return;
@@ -556,7 +653,8 @@ public class HumidityMonitor {
         persistControlState(controlStateSnapshot());
 
         if (saveToDatabase(result.humidity(), result.tempSupply(), result.tempOutside(), result.tempExhaust(),
-            result.tempExtract(), result.supplyRpm(), result.observedFanSpeed(), result.bypassState())) {
+            result.tempExtract(), result.supplyRpm(), result.observedFanSpeed(), result.bypassState(),
+            result.commandedFanSpeed(), result.supplyDuty())) {
             log("Logged: Humidity=" + result.humidity() + "%, Temp=" + result.tempSupply() + "C, RPM="
                     + result.supplyRpm() + (result.boostActive() ? " [BOOST ACTIVE]" : "")
                     + defrostStatusSuffix(result.defrostState()));
@@ -569,7 +667,7 @@ public class HumidityMonitor {
         publishHomeAssistant(result);
     }
 
-    private PollResult pollWithFreshConnection(double historicalHumidityAverage) {
+    private PollResult pollWithFreshConnection(HistoricalBaselines baselines) {
         try {
             client.disconnect();
             log("Establishing connection to Genvex...");
@@ -584,8 +682,6 @@ public class HumidityMonitor {
                 throw new IOException("Required datapoint is unavailable");
             }
 
-            checkBoostLogic(humidity, historicalHumidityAverage);
-
             int tempOutsideRaw = readOptionalDatapoint(21, "Outside temperature");
             int tempExhaustRaw = readOptionalDatapoint(22, "Exhaust temperature");
             int tempExtractRaw = readOptionalDatapoint(23, "Extract temperature");
@@ -597,6 +693,10 @@ public class HumidityMonitor {
             double tempExhaust = rawTemperature(tempExhaustRaw, tempSensorOffsetRaw);
             double tempExtract = rawTemperature(tempExtractRaw, tempSensorOffsetRaw);
 
+            // Runs after the temperature conversions so the recovery test can convert this poll's humidity
+            // to a mixing ratio with this poll's indoor temperature rather than the previous poll's.
+            checkBoostLogic(humidity, baselines, tempExtract);
+
             DefrostState defrostState = detectDefrostState(supplyRpm, extractRpm, tempSupply);
             boolean isDefrosting = defrostState != DefrostState.INACTIVE;
             if (defrostState == DefrostState.ACTIVE) {
@@ -606,8 +706,14 @@ public class HumidityMonitor {
             }
 
             int observedFanSpeed = estimateFanSpeed(supplyRpm, supplyDuty);
+            int setpointReadback = readFanSetpoint();
             if (commandedFanSpeed == -1) {
-                commandedFanSpeed = observedFanSpeed;
+                // After a restart the unit's own setpoint is what we are actually tracking; the
+                // duty-derived speed is only the fallback when the read-back is unavailable.
+                commandedFanSpeed = setpointReadback >= 0 ? setpointReadback : observedFanSpeed;
+            }
+            if (policyTargetSpeed == -1) {
+                policyTargetSpeed = commandedFanSpeed;
             }
 
             int bypassState = -1;
@@ -616,16 +722,18 @@ public class HumidityMonitor {
             } catch (IOException e) {
                 logError("Bypass status unavailable: " + e.getMessage());
             }
+            int effectiveBypassState = effectiveBypassState(bypassState);
 
             // Apply Fan Speed Control
             updateFanSpeed(humidity, tempSupply, tempOutside, tempExtract, observedFanSpeed, supplyDuty,
-                    isDefrosting, bypassState);
+                    isDefrosting, effectiveBypassState, setpointReadback);
 
             log("Polled Data: Humidity=" + humidity + "%, SupplyTempRaw=" + tempSupplyRaw
                 + ", OutsideTempRaw=" + tempOutsideRaw + ", ExhaustTempRaw=" + tempExhaustRaw
                 + ", ExtractTempRaw=" + tempExtractRaw
                 + ", SupplyRPM=" + supplyRpm + ", SupplyDuty=" + supplyDuty + ", ExtractRPM=" + extractRpm
-                + ", Bypass=" + bypassStateLabel(bypassState));
+                + ", Bypass=" + bypassStateLabel(bypassState)
+                + ", FanSetpoint=" + fanSetpointLabel(setpointReadback));
 
             lastHumidity = humidity;
             lastHumidityTime = System.currentTimeMillis();
@@ -638,7 +746,7 @@ public class HumidityMonitor {
             lastObservedFanSpeed = observedFanSpeed;
 
             return new PollResult(humidity, tempSupply, tempOutside, tempExhaust, tempExtract, supplyRpm,
-                    observedFanSpeed, bypassState, boostActive, defrostState);
+                    observedFanSpeed, bypassState, boostActive, defrostState, commandedFanSpeed, supplyDuty);
 
         } catch (Exception e) {
             logError("Error polling data: " + e.getMessage());
@@ -651,7 +759,58 @@ public class HumidityMonitor {
 
     private record PollResult(int humidity, double tempSupply, double tempOutside, double tempExhaust,
             double tempExtract, int supplyRpm, int observedFanSpeed, int bypassState, boolean boostActive,
-            DefrostState defrostState) {}
+            DefrostState defrostState, int commandedFanSpeed, int supplyDuty) {}
+
+    /**
+     * Address 24 is the fan-speed setpoint this service writes. Reading it back tells us whether the
+     * unit actually kept the setpoint, which is the only way to tell "the unit reverted our write"
+     * apart from "the unit kept the setpoint but is running a different duty". The read is optional:
+     * some firmware revisions do not expose it, so failures degrade to the duty-derived estimate.
+     */
+    private int readFanSetpoint() throws InterruptedException {
+        try {
+            int value = normalizeFanSetpoint(client.readDatapoint(24, 1));
+            if (value >= 0 && !setpointReadbackAvailable) {
+                setpointReadbackAvailable = true;
+                log("Fan speed setpoint read-back (address 24) is available on this firmware.");
+            }
+            return value;
+        } catch (IOException e) {
+            if (!setpointReadbackUnavailableLogged) {
+                setpointReadbackUnavailableLogged = true;
+                logError("Fan speed setpoint read-back unavailable; falling back to the duty-derived"
+                        + " fan speed: " + e.getMessage());
+            }
+            return -1;
+        }
+    }
+
+    static int normalizeFanSetpoint(int rawValue) {
+        return rawValue >= 0 && rawValue <= 4 ? rawValue : -1;
+    }
+
+    private static String fanSetpointLabel(int setpointReadback) {
+        return setpointReadback < 0 ? "unknown" : String.valueOf(setpointReadback);
+    }
+
+    /**
+     * A single failed bypass read used to cancel evening cooling outright, which reset the cooling
+     * baseline and dropped the fan a step. Reuse the last known state for a few polls instead.
+     */
+    private int effectiveBypassState(int bypassState) {
+        if (bypassState >= 0) {
+            unknownBypassReads = 0;
+            lastKnownBypassState = bypassState;
+            return bypassState;
+        }
+        unknownBypassReads++;
+        if (unknownBypassReads <= BYPASS_UNKNOWN_TOLERANCE && lastKnownBypassState >= 0) {
+            log("Bypass state unavailable; reusing last known state ("
+                    + bypassStateLabel(lastKnownBypassState) + ") for control.");
+            return lastKnownBypassState;
+        }
+        return -1;
+    }
 
     private int readOptionalDatapoint(int address, String label) throws InterruptedException {
         return readOptionalDatapoint(address, label, 1);
@@ -758,7 +917,9 @@ public class HumidityMonitor {
                 client.connect();
                 client.setFanSpeed(speed);
                 commandedFanSpeed = speed;
+                policyTargetSpeed = speed;
                 lastFanCommandTime = System.currentTimeMillis();
+                fanCommandAttempts = 0;
             } finally {
                 client.disconnect();
             }
@@ -825,13 +986,16 @@ public class HumidityMonitor {
     }
 
     private void updateFanSpeed(int humidity, double tempSupply, double tempOutside, double tempExtract,
-            int observedFanSpeed, int supplyDuty, boolean isDefrosting, int bypassState) {
+            int observedFanSpeed, int supplyDuty, boolean isDefrosting, int bypassState,
+            int setpointReadback) {
         if (restartInProgress.get()) {
+            resetHeatLossGuard();
             log("Maintenance restart active. Automatic fan control paused.");
             return;
         }
         if (monitorOnly) {
             resetEveningCooling();
+            resetHeatLossGuard();
             log("Monitor mode active. Recommended speed: " + NORMAL_SPEED + " (Reason: Monitor Only)");
             return;
         }
@@ -839,16 +1003,22 @@ public class HumidityMonitor {
         int targetSpeed = NORMAL_SPEED;
         String reason = "Normal";
         LocalTime now = LocalTime.now();
+        long nowMillis = System.currentTimeMillis();
         boolean isNightTime = isNight(now);
         boolean automaticControl = true;
+        // Declared out here because the heat-loss guard needs it as its exemption floor. The
+        // selectEveningCoolingSpeed calls stay inside their own branches: that method starts and stops
+        // evening cooling and logs, so calling it on the manual, static or very-high paths - which today
+        // only call resetEveningCooling() - would change behaviour.
+        int coolingSpeed = 0;
 
-        if (manualOverrideActive && System.currentTimeMillis() >= manualOverrideEndTime) {
+        if (manualOverrideActive && nowMillis >= manualOverrideEndTime) {
             manualOverrideActive = false;
             manualOverrideSpeed = -1;
         }
 
         // Manual override takes precedence over everything
-        if (manualOverrideActive && System.currentTimeMillis() < manualOverrideEndTime) {
+        if (manualOverrideActive && nowMillis < manualOverrideEndTime) {
             resetEveningCooling();
             automaticControl = false;
             targetSpeed = manualOverrideSpeed;
@@ -859,25 +1029,53 @@ public class HumidityMonitor {
             targetSpeed = staticRpmSpeed;
             reason = "Static RPM Mode";
         } else if (boostActive) {
-            int coolingSpeed = selectEveningCoolingSpeed(tempSupply, tempOutside, tempExtract, bypassState, now);
-            targetSpeed = selectHumidityRecoverySpeed(humidity, HUMIDITY_POLICY, coolingSpeed);
+            coolingSpeed = selectEveningCoolingSpeed(tempSupply, tempOutside, tempExtract, bypassState, now);
+            targetSpeed = selectHumidityRecoverySpeed(humidity, HUMIDITY_POLICY, coolingSpeed,
+                    policyTargetSpeed, HUMIDITY_HYSTERESIS);
             reason = String.format(Locale.ROOT, coolingSpeed > 0
                 ? "Shower Boost + Evening Cooling (delta %.1f%%)"
                 : "Shower Boost (delta %.1f%%)", humidity - boostBaselineHumidity);
         } else {
-            if (humidity >= HUMIDITY_VERY_HIGH_THRESHOLD) {
+            int veryHighSpeed = Math.max(3, NORMAL_SPEED);
+            int effectiveVeryHigh = effectiveThreshold(HUMIDITY_VERY_HIGH_THRESHOLD, HUMIDITY_HYSTERESIS,
+                    policyTargetSpeed >= veryHighSpeed);
+            if (humidity >= effectiveVeryHigh) {
                 resetEveningCooling();
-                targetSpeed = Math.max(3, NORMAL_SPEED);
+                targetSpeed = veryHighSpeed;
                 reason = "Humidity Very High";
             } else {
-                int coolingSpeed = selectEveningCoolingSpeed(tempSupply, tempOutside, tempExtract, bypassState, now);
+                coolingSpeed = selectEveningCoolingSpeed(tempSupply, tempOutside, tempExtract, bypassState, now);
                 targetSpeed = selectAutomaticSpeed(humidity, isNightTime, coolingSpeed,
-                        HUMIDITY_LOW_THRESHOLD, HUMIDITY_HIGH_THRESHOLD, NORMAL_SPEED);
+                        HUMIDITY_LOW_THRESHOLD, HUMIDITY_HIGH_THRESHOLD, NORMAL_SPEED,
+                        policyTargetSpeed, HUMIDITY_HYSTERESIS);
+                int effectiveHigh = effectiveThreshold(HUMIDITY_HIGH_THRESHOLD, HUMIDITY_HYSTERESIS,
+                        policyTargetSpeed >= Math.max(2, NORMAL_SPEED));
                 reason = coolingSpeed > 0 ? "Evening Cooling"
-                        : humidity >= HUMIDITY_HIGH_THRESHOLD ? "Humidity High"
+                        : humidity >= effectiveHigh ? "Humidity High"
                         : isNightTime ? "Night Mode"
                         : humidity <= HUMIDITY_LOW_THRESHOLD ? "Humidity Low" : "Normal";
             }
+        }
+
+        // What humidity control asked for, before any limiter touched it. This is the guard's input and the
+        // hysteresis latch for the next poll; the guard's own reduced write must never take its place.
+        int policyTarget = targetSpeed;
+        policyTargetSpeed = automaticControl ? policyTarget : commandedFanSpeed;
+        if (automaticControl) {
+            double moisture = HumidityPhysics.mixingRatioGramsPerKg(humidity, tempExtract);
+            HeatLossGuardPolicy.HeatLossState previousHeatLossState = heatLossState;
+            heatLossState = HeatLossGuardPolicy.evaluate(previousHeatLossState, policyTarget, humidity,
+                    moisture, tempExtract, tempOutside, nowMillis, HEAT_LOSS_CONFIG);
+            int guardedSpeed = HeatLossGuardPolicy.guardedSpeed(policyTarget, coolingSpeed, heatLossState,
+                    HEAT_LOSS_CONFIG);
+            if (guardedSpeed < targetSpeed) {
+                targetSpeed = guardedSpeed;
+                reason += " + Heat Loss Guard";
+            }
+            logHeatLossTransition(previousHeatLossState, heatLossState, moisture, tempExtract, tempOutside,
+                    nowMillis);
+        } else {
+            heatLossState = HeatLossGuardPolicy.HeatLossState.IDLE;
         }
 
         int unrestrictedTargetSpeed = targetSpeed;
@@ -889,64 +1087,105 @@ public class HumidityMonitor {
             }
         }
         
-        boolean forceUpdate = false;
-        
-        // Logic:
-        // If we are in Defrost mode, the unit will override our setting (making RPM 0).
-        // Sending commands might be futile or fighting the controller.
-        // However, we should ensure the controller at least *knows* we want speed X, so if it exits defrost, it returns to X.
-        
-        // Critical Fix: check supplyDuty because that tells us what the controller is *trying* to do.
-        // Identify "Stopped but commanded ON"
-        // If target > 0, but Supply Duty is 0 (Off), then the controller thinks it should be OFF.
-        // This is where we need to force it.
-        if (targetSpeed > 0 && supplyDuty == 0 && !isDefrosting) {
-            log("CRITICAL: Fan Duty is 0 (OFF) but target is " + targetSpeed + ". Forcing speed update.");
-            forceUpdate = true;
+        // If we are in Defrost mode, the unit will override our setting (making RPM 0), so sending
+        // commands is futile. The controller keeps the last setpoint we wrote, so it returns to that
+        // speed once defrost ends.
+
+        // Supply duty tells us what the controller is *trying* to do. Duty 0 outside defrost means
+        // the controller believes the fan should be off, so the setpoint has not taken effect.
+        boolean fanStopped = targetSpeed > 0 && supplyDuty == 0 && !isDefrosting;
+        boolean held = setpointHeld(commandedFanSpeed, observedFanSpeed, setpointReadback);
+        if (held && !fanStopped && fanCommandAttempts > 0) {
+            log("Genvex is holding fan setpoint " + commandedFanSpeed + " again after "
+                    + fanCommandAttempts + " attempt(s).");
+            fanCommandAttempts = 0;
         }
 
-        long nowMillis = System.currentTimeMillis();
-        long retryIntervalMillis = Math.max(60_000L, POLL_INTERVAL * 2_000L);
-        if (shouldSendFanCommand(targetSpeed, observedFanSpeed, commandedFanSpeed, forceUpdate,
-                nowMillis, lastFanCommandTime, retryIntervalMillis)) {
-            if (isDefrosting) {
-                 log("Defrost active. Not forcing fan speed update to avoid fighting controller.");
-            } else {
-                try {
-                    log("Adjusting Fan Speed: " + observedFanSpeed + " -> " + targetSpeed + " (Reason: " + reason + ", Force: " + forceUpdate + ")");
-                    client.setFanSpeed(targetSpeed);
-                    commandedFanSpeed = targetSpeed;
-                    lastFanCommandTime = nowMillis;
-                } catch (Exception e) {
-                    logError("Failed to set fan speed: " + e.getMessage());
-                }
-            }
+        FanCommandDecision decision = decideFanCommand(targetSpeed != commandedFanSpeed,
+                targetSpeed > commandedFanSpeed, held && !fanStopped, nowMillis, lastFanCommandTime,
+                fanCommandAttempts, FAN_PACING);
+
+        // Defrost is decided last so the diagnostic line still reports one outcome per poll: the
+        // controller drives the fan itself while defrosting, and it keeps our setpoint for afterwards.
+        String outcome = isDefrosting ? "hold (defrost active)"
+                : decision.send() ? "write"
+                : "wait " + (decision.waitMillis() / 1000) + "s";
+        log(String.format(Locale.ROOT,
+            "Fan decision: target=%d (%s) commanded=%d observed=%d duty=%d%% setpoint=%s settled=%b"
+            + " attempts=%d guard=%s -> %s",
+            targetSpeed, reason, commandedFanSpeed, observedFanSpeed, supplyDuty / 100,
+            fanSetpointLabel(setpointReadback), held && !fanStopped, fanCommandAttempts,
+            HeatLossGuardPolicy.describe(heatLossState, nowMillis), outcome));
+
+        if (isDefrosting || !decision.send()) {
+            return;
+        }
+        if (fanStopped) {
+            log("Fan duty is 0 (OFF) but target is " + targetSpeed + ". Re-applying setpoint.");
+        }
+        try {
+            log("Adjusting Fan Speed: " + observedFanSpeed + " -> " + targetSpeed + " (Reason: " + reason
+                    + ", attempt " + decision.attempts() + ")");
+            client.setFanSpeed(targetSpeed);
+            commandedFanSpeed = targetSpeed;
+        } catch (Exception e) {
+            logError("Failed to set fan speed: " + e.getMessage());
+        } finally {
+            // Record the attempt even when the write failed, so a broken link is paced the same way
+            // as a rejected setpoint instead of being retried on every poll.
+            lastFanCommandTime = nowMillis;
+            fanCommandAttempts = decision.attempts();
+        }
+
+        if (fanCommandAttempts > FAN_PACING.attemptsBeforeBackoff()) {
+            log(String.format(Locale.ROOT,
+                "Genvex is not holding fan setpoint %d (observed %d, duty %d%%, setpoint read-back %s)"
+                + " after %d attempts. Backing off; next attempt in %d min.",
+                targetSpeed, observedFanSpeed, supplyDuty / 100, fanSetpointLabel(setpointReadback),
+                fanCommandAttempts, retryIntervalMillis(fanCommandAttempts, FAN_PACING) / 60_000));
         }
     }
 
-    static int selectHumiditySpeed(int humidity, int lowThreshold, int highThreshold, int normalSpeed) {
-        if (humidity >= highThreshold) {
-            return Math.max(2, normalSpeed);
+    /**
+     * Humidity is reported as a whole percent and jitters by a point or two, so a bare threshold
+     * comparison flips the target speed on every poll whenever the reading sits on a boundary.
+     * Once a threshold has raised the fan, hold that step until humidity falls a full deadband below
+     * the threshold. This mirrors the start/continue deadband {@link EveningCoolingPolicy} already
+     * applies to temperatures.
+     */
+    static int effectiveThreshold(int threshold, int hysteresis, boolean alreadyAbove) {
+        return alreadyAbove ? threshold - hysteresis : threshold;
+    }
+
+    static int selectHumiditySpeed(int humidity, int lowThreshold, int highThreshold, int normalSpeed,
+            int currentSpeed, int hysteresis) {
+        int highSpeed = Math.max(2, normalSpeed);
+        if (humidity >= effectiveThreshold(highThreshold, hysteresis, currentSpeed >= highSpeed)) {
+            return highSpeed;
         }
-        if (humidity <= lowThreshold) {
+        // The low branch lowers the fan, so its deadband widens upward instead of downward.
+        if (humidity <= (currentSpeed <= 1 ? lowThreshold + hysteresis : lowThreshold)) {
             return 1;
         }
         return normalSpeed;
     }
 
     static int selectAutomaticSpeed(int humidity, boolean night, int coolingSpeed,
-            int lowThreshold, int highThreshold, int normalSpeed) {
+            int lowThreshold, int highThreshold, int normalSpeed, int currentSpeed, int hysteresis) {
+        int highSpeed = Math.max(2, normalSpeed);
+        boolean aboveHigh = humidity
+                >= effectiveThreshold(highThreshold, hysteresis, currentSpeed >= highSpeed);
         if (coolingSpeed > 0) {
-            return humidity >= highThreshold
-                    ? Math.max(coolingSpeed, Math.max(2, normalSpeed)) : coolingSpeed;
+            return aboveHigh ? Math.max(coolingSpeed, highSpeed) : coolingSpeed;
         }
-        if (humidity >= highThreshold) {
-            return Math.max(2, normalSpeed);
+        if (aboveHigh) {
+            return highSpeed;
         }
         if (night) {
             return 1;
         }
-        return selectHumiditySpeed(humidity, lowThreshold, highThreshold, normalSpeed);
+        return selectHumiditySpeed(humidity, lowThreshold, highThreshold, normalSpeed, currentSpeed,
+                hysteresis);
     }
 
     static int limitNightSpeed(int targetSpeed, boolean night, int humidity,
@@ -957,21 +1196,79 @@ public class HumidityMonitor {
         return Math.min(2, targetSpeed);
     }
 
-    static boolean shouldSendFanCommand(int targetSpeed, int observedFanSpeed, int commandedFanSpeed,
-            boolean forceUpdate, long now, long lastCommandTime, long retryIntervalMillis) {
-        return forceUpdate || targetSpeed != commandedFanSpeed
-                || (targetSpeed != observedFanSpeed && now - lastCommandTime >= retryIntervalMillis);
+    record FanCommandPacing(long minIntervalMillis, long retryIntervalMillis,
+            long maxRetryIntervalMillis, int attemptsBeforeBackoff) {}
+
+    record FanCommandDecision(boolean send, int attempts, long waitMillis) {}
+
+    /**
+     * Decides whether to write the fan setpoint on this poll.
+     *
+     * <p>The unit's own controller can revert a setpoint we wrote (week program, its own humidity
+     * control, a panel change). Re-writing on a fixed interval then fights it forever, which is what
+     * makes the fan cycle between two speeds all night. Instead, count consecutive unsettled polls
+     * and back off exponentially up to {@code maxRetryIntervalMillis}, so the fan comes to rest at
+     * whatever the unit insists on until conditions actually change.
+     *
+     * @param targetChanged the policy target differs from the setpoint we last wrote
+     * @param raising the new target is higher than what we last wrote
+     * @param settled the unit is running the setpoint we last wrote
+     */
+    static FanCommandDecision decideFanCommand(boolean targetChanged, boolean raising, boolean settled,
+            long now, long lastCommandTime, int attempts, FanCommandPacing pacing) {
+        long elapsed = Math.max(0, now - lastCommandTime);
+        if (targetChanged) {
+            // Raising speed answers humidity or heat, so it goes out immediately. Lowering is never
+            // urgent, so it waits out the minimum spacing and cannot chatter against a raise.
+            long required = raising ? 0 : pacing.minIntervalMillis();
+            return elapsed >= required
+                    ? new FanCommandDecision(true, 0, 0)
+                    : new FanCommandDecision(false, attempts, required - elapsed);
+        }
+        if (settled) {
+            return new FanCommandDecision(false, 0, 0);
+        }
+        long required = Math.max(pacing.minIntervalMillis(), retryIntervalMillis(attempts, pacing));
+        return elapsed >= required
+                ? new FanCommandDecision(true, attempts + 1, 0)
+                : new FanCommandDecision(false, attempts, required - elapsed);
+    }
+
+    static long retryIntervalMillis(int attempts, FanCommandPacing pacing) {
+        long interval = pacing.retryIntervalMillis();
+        int doublings = Math.max(0, attempts - pacing.attemptsBeforeBackoff() + 1);
+        for (int i = 0; i < doublings && interval < pacing.maxRetryIntervalMillis(); i++) {
+            interval = Math.min(pacing.maxRetryIntervalMillis(), interval * 2);
+        }
+        return interval;
+    }
+
+    /**
+     * Whether the unit is running the speed we last commanded. The address 24 read-back is
+     * authoritative when the firmware exposes it; otherwise fall back to the duty-derived estimate.
+     */
+    static boolean setpointHeld(int commandedSpeed, int observedFanSpeed, int setpointReadback) {
+        if (commandedSpeed < 0) {
+            return false;
+        }
+        if (setpointReadback >= 0) {
+            return setpointReadback == commandedSpeed;
+        }
+        return observedFanSpeed == commandedSpeed;
     }
 
     record HumidityPolicy(int riseThreshold, int recoveryTolerance, int boostSpeed,
             int normalSpeed, int lowThreshold, int highThreshold, int veryHighThreshold) {}
 
-    static int selectHumidityRecoverySpeed(int humidity, HumidityPolicy policy, int coolingSpeed) {
+    static int selectHumidityRecoverySpeed(int humidity, HumidityPolicy policy, int coolingSpeed,
+            int currentSpeed, int hysteresis) {
         int boostSpeed = Math.max(policy.normalSpeed(), policy.boostSpeed());
-        int absoluteHumiditySpeed = humidity >= policy.veryHighThreshold()
-            ? Math.max(3, policy.normalSpeed())
+        int veryHighSpeed = Math.max(3, policy.normalSpeed());
+        int absoluteHumiditySpeed = humidity >= effectiveThreshold(policy.veryHighThreshold(),
+                hysteresis, currentSpeed >= veryHighSpeed)
+            ? veryHighSpeed
             : selectHumiditySpeed(humidity, policy.lowThreshold(), policy.highThreshold(),
-                policy.normalSpeed());
+                policy.normalSpeed(), currentSpeed, hysteresis);
         return Math.max(coolingSpeed, Math.max(boostSpeed, absoluteHumiditySpeed));
     }
 
@@ -984,7 +1281,20 @@ public class HumidityMonitor {
         return baselineHumidity;
     }
 
-    static boolean shouldDeactivateBoost(int humidity, double baselineHumidity) {
+    /**
+     * Whether the house has recovered from the shower. Relative humidity is temperature-dependent, so a
+     * house that has cooled a degree since the shower started reads about four points wetter than it is,
+     * and in winter that keeps the boost running for hours; the mixing ratio is the honest comparison.
+     *
+     * <p>It <em>falls back</em> to the relative-humidity baseline rather than replacing it. The persisted
+     * {@code boost_baseline} column stays a percentage so that an older binary reading this database still
+     * behaves, which means a boost restored across a restart has only the RH baseline to work with.
+     */
+    static boolean shouldDeactivateBoost(int humidity, double baselineHumidity,
+            double moistureGramsPerKg, double baselineMoistureGramsPerKg) {
+        if (Double.isFinite(baselineMoistureGramsPerKg) && Double.isFinite(moistureGramsPerKg)) {
+            return moistureGramsPerKg <= baselineMoistureGramsPerKg;
+        }
         return Double.isFinite(baselineHumidity)
             && humidity <= humidityRecoveryTarget(baselineHumidity);
     }
@@ -1006,6 +1316,47 @@ public class HumidityMonitor {
             }
         }
         return Double.NaN;
+    }
+
+    /**
+     * Average indoor mixing ratio over the window, in g/kg. The conversion happens per row in Java because
+     * SQLite has no saturation-pressure function, and averaging the humidity column first would defeat the
+     * point: the rows can span a temperature change, which is exactly what this baseline has to see through.
+     *
+     * @return NaN when no row in the window carries both a usable humidity and a usable extract
+     *         temperature, so the caller can fall back to the relative-humidity baseline
+     */
+    static double historicalMoistureAverage(Connection connection, Instant endExclusive,
+            int windowMinutes) throws SQLException {
+        String sql = "SELECT humidity, temp_extract FROM humidity_readings "
+                + "WHERE timestamp >= ? AND timestamp < ?";
+        DateTimeFormatter sqliteTimestamp = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+                .withZone(ZoneOffset.UTC);
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, sqliteTimestamp.format(endExclusive.minusSeconds(windowMinutes * 60L)));
+            statement.setString(2, sqliteTimestamp.format(endExclusive));
+            double total = 0.0;
+            int samples = 0;
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next()) {
+                    int humidity = result.getInt(1);
+                    if (result.wasNull()) {
+                        continue;
+                    }
+                    double tempExtract = result.getDouble(2);
+                    if (result.wasNull()) {
+                        continue;
+                    }
+                    double moisture = HumidityPhysics.mixingRatioGramsPerKg(humidity, tempExtract);
+                    if (!Double.isFinite(moisture)) {
+                        continue;
+                    }
+                    total += moisture;
+                    samples++;
+                }
+            }
+            return samples == 0 ? Double.NaN : total / samples;
+        }
     }
 
     private int selectEveningCoolingSpeed(double tempSupply, double tempOutside, double tempExtract,
@@ -1057,6 +1408,39 @@ public class HumidityMonitor {
         eveningCoolingSpeed = 0;
         coolingBaselineIndoorTemp = Double.NaN;
         coolingBaselineTime = 0;
+    }
+
+    /**
+     * Called whenever automatic control is suspended. A step-down is only ever justified against the policy
+     * target it was measured from, so returning to automatic control must never resume one measured against
+     * a target that no longer applies.
+     */
+    private void resetHeatLossGuard() {
+        heatLossState = HeatLossGuardPolicy.HeatLossState.IDLE;
+        policyTargetSpeed = commandedFanSpeed;
+    }
+
+    /** One line per state change, not per poll - the per-poll fan decision line already carries the state. */
+    private void logHeatLossTransition(HeatLossGuardPolicy.HeatLossState previous,
+            HeatLossGuardPolicy.HeatLossState next, double moistureGramsPerKg, double tempExtract,
+            double tempOutside, long nowMillis) {
+        if (previous.stepDown() == next.stepDown() && previous.holding() == next.holding()) {
+            return;
+        }
+        String event;
+        if (next.stepDown() > previous.stepDown()) {
+            event = "holding back one speed to see whether the house is still drying";
+        } else if (next.holding() && !previous.holding()) {
+            event = "drying stalled, giving one speed back and holding there";
+        } else if (next.stepDown() == 0) {
+            event = "released, humidity control has the fan back";
+        } else {
+            event = "hold released, moisture is falling unaided again";
+        }
+        log(String.format(Locale.ROOT,
+                "Heat loss guard: %s (%s, indoor %.1fC, outside %.1fC, moisture %.2f g/kg)",
+                event, HeatLossGuardPolicy.describe(next, nowMillis), tempExtract, tempOutside,
+                moistureGramsPerKg));
     }
 
     private void refreshSunStateIfNeeded() {
@@ -1195,7 +1579,7 @@ public class HumidityMonitor {
         }
     }
 
-    private void checkBoostLogic(int currentHumidity, double historicalHumidityAverage) {
+    private void checkBoostLogic(int currentHumidity, HistoricalBaselines baselines, double tempExtract) {
         if (!BOOST_ENABLED || monitorOnly || staticRpmMode) return;
         if (lastHumidity == -1) return; // First run, can't calculate delta
 
@@ -1212,46 +1596,73 @@ public class HumidityMonitor {
                 return;
             }
 
-            double baselineHumidity = Double.isFinite(historicalHumidityAverage)
-                    ? historicalHumidityAverage : lastHumidity;
+            double baselineHumidity = Double.isFinite(baselines.humidityAverage())
+                    ? baselines.humidityAverage() : lastHumidity;
             if (hasHumidityRise(currentHumidity, baselineHumidity, HUMIDITY_POLICY)) {
                 log(String.format(Locale.ROOT,
                         "Humidity rise detected (%d%% current, pre-rise baseline %.1f%%). Activating boost.",
                         currentHumidity, baselineHumidity));
-                activateBoost(currentHumidity, baselineHumidity);
+                activateBoost(currentHumidity, baselineHumidity, baselines.moistureAverage(), tempExtract);
             }
         } else {
-            if (shouldDeactivateBoost(currentHumidity, boostBaselineHumidity)) {
-                log(String.format(Locale.ROOT,
-                        "Humidity recovered (%d%%, recovery target %.1f%%). Deactivating Boost.",
-                        currentHumidity, humidityRecoveryTarget(boostBaselineHumidity)));
+            double moisture = HumidityPhysics.mixingRatioGramsPerKg(currentHumidity, tempExtract);
+            if (shouldDeactivateBoost(currentHumidity, boostBaselineHumidity, moisture,
+                    boostBaselineMoisture)) {
+                boolean judgedOnMoisture =
+                        Double.isFinite(boostBaselineMoisture) && Double.isFinite(moisture);
+                log(judgedOnMoisture
+                        ? String.format(Locale.ROOT,
+                            "Humidity recovered (%.2f g/kg moisture at %d%%, pre-shower baseline"
+                            + " %.2f g/kg). Deactivating Boost.",
+                            moisture, currentHumidity, boostBaselineMoisture)
+                        : String.format(Locale.ROOT,
+                            "Humidity recovered (%d%%, recovery target %.1f%%). Deactivating Boost.",
+                            currentHumidity, humidityRecoveryTarget(boostBaselineHumidity)));
                 deactivateBoost();
             }
         }
     }
 
-    private void activateBoost(int activationHumidity, double baselineHumidity) {
+    private void activateBoost(int activationHumidity, double baselineHumidity,
+            double baselineMoisture, double tempExtract) {
         boostActive = true;
         boostBaselineHumidity = baselineHumidity;
+        // Not persisted: the boost_baseline column stays a relative humidity so an older binary can still
+        // read this database. When the baseline window holds no usable row, the previous poll's humidity is
+        // the best pre-rise stand-in available; if that cannot be converted either the exit falls back to RH.
+        boostBaselineMoisture = Double.isFinite(baselineMoisture)
+                ? baselineMoisture
+                : HumidityPhysics.mixingRatioGramsPerKg(lastHumidity, tempExtract);
         boostEndTime = 0;
-        log(String.format(Locale.ROOT,
-            "Shower boost activated at %d%% humidity; maintaining boost until humidity returns to %.1f%%.",
-            activationHumidity, baselineHumidity));
+        log(Double.isFinite(boostBaselineMoisture)
+                ? String.format(Locale.ROOT,
+                    "Shower boost activated at %d%% humidity; maintaining boost until moisture returns to"
+                    + " %.2f g/kg (pre-rise baseline %.1f%% RH).",
+                    activationHumidity, boostBaselineMoisture, baselineHumidity)
+                : String.format(Locale.ROOT,
+                    "Shower boost activated at %d%% humidity; maintaining boost until humidity returns to %.1f%%.",
+                    activationHumidity, baselineHumidity));
     }
 
     private void deactivateBoost() {
         boostActive = false;
         boostBaselineHumidity = Double.NaN;
+        boostBaselineMoisture = Double.NaN;
         boostEndTime = 0;
         // Speed change will be handled by updateFanSpeed()
     }
 
-    private double loadHistoricalHumidityAverage(Instant endExclusive) {
+    /** The pre-rise baselines, both averaged over the same window: relative humidity and mixing ratio. */
+    private record HistoricalBaselines(double humidityAverage, double moistureAverage) {}
+
+    private HistoricalBaselines loadHistoricalBaselines(Instant endExclusive) {
         try (Connection connection = DriverManager.getConnection(DB_URL)) {
-            return historicalHumidityAverage(connection, endExclusive, HUMIDITY_BASELINE_MINUTES);
+            return new HistoricalBaselines(
+                    historicalHumidityAverage(connection, endExclusive, HUMIDITY_BASELINE_MINUTES),
+                    historicalMoistureAverage(connection, endExclusive, HUMIDITY_BASELINE_MINUTES));
         } catch (SQLException e) {
-            logError("Failed to load historical humidity average: " + e.getMessage());
-            return Double.NaN;
+            logError("Failed to load historical humidity baselines: " + e.getMessage());
+            return new HistoricalBaselines(Double.NaN, Double.NaN);
         }
     }
 
@@ -1386,9 +1797,10 @@ public class HumidityMonitor {
     }
 
     private boolean saveToDatabase(int humidity, double tempSupply, double tempOutside, double tempExhaust,
-            double tempExtract, int rpm, int fanSpeed, int bypassState) {
+            double tempExtract, int rpm, int fanSpeed, int bypassState, int commandedSpeed, int supplyDuty) {
         String sql = "INSERT INTO humidity_readings (humidity, temp_supply, temp_outside, temp_exhaust, " +
-                     "temp_extract, fan_rpm, fan_speed_level, bypass_open) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+                     "temp_extract, fan_rpm, fan_speed_level, bypass_open, commanded_speed, supply_duty) " +
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         try (Connection conn = DriverManager.getConnection(DB_URL);
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -1401,6 +1813,8 @@ public class HumidityMonitor {
             pstmt.setInt(6, rpm);
             pstmt.setInt(7, fanSpeed);
             setNullableInteger(pstmt, 8, bypassState);
+            setNullableInteger(pstmt, 9, commandedSpeed);
+            setNullableInteger(pstmt, 10, supplyDuty);
             pstmt.executeUpdate();
             
             if (dbErrorCount > 0) {
@@ -1463,16 +1877,27 @@ public class HumidityMonitor {
         }
     }
 
-    private int estimateFanSpeed(int rpm, int duty) {
+    /** Supply-fan duty percentage per speed on the Optima 270, see ADDRESS_MAP.md. */
+    private static final int[] SPEED_DUTY_PERCENT = {0, 30, 50, 70, 100};
+
+    /**
+     * Maps duty to the nearest documented speed rather than using hard upper bounds. The old bounds
+     * were asymmetric, so a speed-2 duty of exactly 60% read as speed 3 and the control loop then
+     * saw a permanent mismatch against its own setpoint.
+     */
+    static int estimateFanSpeed(int rpm, int duty) {
         if (rpm < 100) {
             return 0;
         }
         int pct = duty / 100; // e.g. 5000 -> 50
         if (pct < 15) return 0;
-        if (pct < 40) return 1; // Speed 1 (usually ~30%)
-        if (pct < 60) return 2; // Speed 2 (usually ~50%)
-        if (pct < 85) return 3; // Speed 3 (usually ~70-80%)
-        return 4;               // Speed 4 (usually 100%)
+        int nearest = 1;
+        for (int speed = 2; speed < SPEED_DUTY_PERCENT.length; speed++) {
+            if (Math.abs(pct - SPEED_DUTY_PERCENT[speed]) < Math.abs(pct - SPEED_DUTY_PERCENT[nearest])) {
+                nearest = speed;
+            }
+        }
+        return nearest;
     }
 
     private void log(String message) {

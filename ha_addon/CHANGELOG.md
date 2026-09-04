@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.74
+
+- Add a heat-loss guard: in cold weather, humidity-driven ventilation now steps down one speed at a time and keeps each step only while the house is measurably still drying, instead of holding a high speed for hours and cooling the house.
+- Arm the guard only below 23 C indoors and more than 5 C warmer inside than out, never below normal speed, never above 80 % humidity, and never against manual override, static mode or evening cooling.
+- Judge drying on the mixing ratio (g water per kg dry air) rather than on relative humidity, so a room that cools during a probe is not misread as getting wetter.
+- End shower boost on the same absolute-moisture comparison, which stops a boost from running on at speed 3 for hours after the house has cooled a degree.
+- Show the guard on the dashboard as its own banner and as a chip on the humidity-recovery banner, and name its state in the per-poll fan decision log.
+- Stop the dashboard from breaking when the supply temperature or the boost recovery target is unavailable.
+
+## 1.73
+
+- Stop the fan from cycling between two speeds when the unit refuses a setpoint: retries now back off from 2 minutes to 30 minutes and log a clear warning instead of rewriting every minute.
+- Add a 3 % humidity deadband to every threshold so sensor jitter around 30/65/80 % no longer flips the fan target on each poll.
+- Read the fan setpoint back from address 24 to tell a rejected write apart from a unit that keeps the setpoint but runs another duty.
+- Pace the duty-is-zero recovery write and count failed writes, so a dropped link is no longer retried on every poll.
+- Map supply duty to the nearest documented speed, removing the permanent phantom mismatch at 60 % duty.
+- Reuse the last known bypass state for up to 3 failed reads instead of cancelling evening cooling.
+- Log one fan decision line per poll and record `commanded_speed` and `supply_duty` in history, with a commanded-speed chart series.
+
 ## 1.72
 
 - Remove committed household telemetry, device identifiers, and connection-identity logging.

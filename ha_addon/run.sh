@@ -30,6 +30,20 @@ if [ -f "$CONFIG_PATH" ]; then
     export COOLING_MIN_SUPPLY_TEMP=$(jq --raw-output '.cooling_min_supply_temp // 15.0' "$CONFIG_PATH")
     export COOLING_FALLBACK_START=$(jq --raw-output '.cooling_fallback_start // "18:00"' "$CONFIG_PATH")
     export COOLING_ESCALATION_MINUTES=$(jq --raw-output '.cooling_escalation_minutes // 30' "$CONFIG_PATH")
+    export HUMIDITY_HYSTERESIS=$(jq --raw-output '.humidity_hysteresis // 3' "$CONFIG_PATH")
+    export FAN_MIN_COMMAND_INTERVAL_SECONDS=$(jq --raw-output '.fan_min_command_interval_seconds // 120' "$CONFIG_PATH")
+    export FAN_RETRY_INTERVAL_SECONDS=$(jq --raw-output '.fan_retry_interval_seconds // 120' "$CONFIG_PATH")
+    export FAN_MAX_RETRY_INTERVAL_SECONDS=$(jq --raw-output '.fan_max_retry_interval_seconds // 1800' "$CONFIG_PATH")
+    export FAN_RETRY_ATTEMPTS_BEFORE_BACKOFF=$(jq --raw-output '.fan_retry_attempts_before_backoff // 3' "$CONFIG_PATH")
+    export BYPASS_UNKNOWN_TOLERANCE=$(jq --raw-output '.bypass_unknown_tolerance // 3' "$CONFIG_PATH")
+    export HEAT_LOSS_GUARD_ENABLED=$(jq --raw-output 'if has("heat_loss_guard_enabled") then .heat_loss_guard_enabled else true end' "$CONFIG_PATH")
+    export HEAT_LOSS_INDOOR_TEMP_C=$(jq --raw-output '.heat_loss_indoor_temp_c // 23.0' "$CONFIG_PATH")
+    export HEAT_LOSS_TEMP_DELTA_C=$(jq --raw-output '.heat_loss_temp_delta_c // 5.0' "$CONFIG_PATH")
+    export HEAT_LOSS_PROBE_MINUTES=$(jq --raw-output '.heat_loss_probe_minutes // 10' "$CONFIG_PATH")
+    export HEAT_LOSS_PROGRESS_G_PER_KG=$(jq --raw-output '.heat_loss_progress_g_per_kg // 0.15' "$CONFIG_PATH")
+    export HEAT_LOSS_PEAK_MARGIN_G_PER_KG=$(jq --raw-output '.heat_loss_peak_margin_g_per_kg // 0.3' "$CONFIG_PATH")
+    # HEAT_LOSS_OVERRIDE_HUMIDITY is deliberately not an option: it defaults to
+    # humidity_very_high_threshold in code, so the mould override follows the one threshold that sets it.
 else
     echo "Warning: $CONFIG_PATH not found. Using environment variables or defaults."
 fi
@@ -45,6 +59,17 @@ fi
 : "${COOLING_START_TEMP:=22.5}"
 : "${COOLING_STOP_TEMP:=22.0}"
 : "${COOLING_MIN_SUPPLY_TEMP:=15.0}"
+: "${HUMIDITY_HYSTERESIS:=3}"
+: "${FAN_MIN_COMMAND_INTERVAL_SECONDS:=120}"
+: "${FAN_RETRY_INTERVAL_SECONDS:=120}"
+: "${FAN_MAX_RETRY_INTERVAL_SECONDS:=1800}"
+: "${FAN_RETRY_ATTEMPTS_BEFORE_BACKOFF:=3}"
+: "${HEAT_LOSS_GUARD_ENABLED:=true}"
+: "${HEAT_LOSS_INDOOR_TEMP_C:=23.0}"
+: "${HEAT_LOSS_TEMP_DELTA_C:=5.0}"
+: "${HEAT_LOSS_PROBE_MINUTES:=10}"
+: "${HEAT_LOSS_PROGRESS_G_PER_KG:=0.15}"
+: "${HEAT_LOSS_PEAK_MARGIN_G_PER_KG:=0.3}"
 
 echo "Configuration:"
 echo "  Genvex IP: $GENVEX_IP"
@@ -54,6 +79,9 @@ echo "  Boost Enabled: $BOOST_ENABLED"
 echo "  Humidity Recovery: $HUMIDITY_BASELINE_MINUTES min pre-rise baseline"
 echo "  Temperature Sensor Offset Raw: $TEMP_SUPPLY_OFFSET_RAW"
 echo "  Evening Cooling: $EVENING_COOLING_ENABLED (start $COOLING_START_TEMP C, stop $COOLING_STOP_TEMP C, supply floor $COOLING_MIN_SUPPLY_TEMP C)"
+echo "  Humidity Hysteresis: $HUMIDITY_HYSTERESIS %"
+echo "  Fan Command Pacing: min $FAN_MIN_COMMAND_INTERVAL_SECONDS s, retry $FAN_RETRY_INTERVAL_SECONDS s, backoff after $FAN_RETRY_ATTEMPTS_BEFORE_BACKOFF attempts up to $FAN_MAX_RETRY_INTERVAL_SECONDS s"
+echo "  Heat Loss Guard: $HEAT_LOSS_GUARD_ENABLED (below $HEAT_LOSS_INDOOR_TEMP_C C indoors and more than $HEAT_LOSS_TEMP_DELTA_C C colder outside, ${HEAT_LOSS_PROBE_MINUTES}-min probes needing $HEAT_LOSS_PROGRESS_G_PER_KG g/kg, peak margin $HEAT_LOSS_PEAK_MARGIN_G_PER_KG g/kg)"
 
 # Start the Java application
 exec java -Djava.net.preferIPv4Stack=true -jar /app/app.jar

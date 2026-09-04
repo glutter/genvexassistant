@@ -206,6 +206,7 @@
         .status-banner.manual { border-color: #346898; background: #142231; }
         .status-banner.boost { border-color: #376553; background: #14241e; }
         .status-banner.cooling { border-color: #6f592e; background: #282116; }
+        .status-banner.guard { border-color: #4a5c74; background: #1a2029; }
         .control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
         .control-card, .chart-panel { min-width: 0; margin: 0; padding: 14px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--card-bg); }
         .control-card { display: block; }
@@ -437,6 +438,7 @@
                 <button class="series-toggle" style="--series-color: #ad8be8" data-series="tempExhaust" aria-pressed="false" onclick="toggleSeries('tempExhaust')"><span class="series-swatch"></span>Exhaust</button>
                 <button class="series-toggle active" style="--series-color: #ef6b73" data-series="rpm" aria-pressed="true" onclick="toggleSeries('rpm')"><span class="series-swatch"></span>RPM</button>
                 <button class="series-toggle" style="--series-color: #f4d35e" data-series="fanSpeed" aria-pressed="false" onclick="toggleSeries('fanSpeed')"><span class="series-swatch"></span>Fan speed</button>
+                <button class="series-toggle" style="--series-color: #9fb4c7" data-series="commandedSpeed" aria-pressed="false" onclick="toggleSeries('commandedSpeed')"><span class="series-swatch"></span>Commanded</button>
                 <button class="series-toggle" style="--series-color: #e58f65" data-series="bypass" aria-pressed="false" onclick="toggleSeries('bypass')"><i class="fas fa-door-open" aria-hidden="true"></i>Bypass</button>
             </div>
             <div class="chart-container">
@@ -466,6 +468,7 @@
             tempExhaust: false,
             rpm: true,
             fanSpeed: false,
+            commandedSpeed: false,
             bypass: false
         };
 
@@ -515,7 +518,7 @@
 
         function updateLiveDisplay(data) {
             document.getElementById('live-humidity').textContent = data.humidity + '%';
-            document.getElementById('live-temp').textContent = data.temp_supply.toFixed(1) + '°C';
+            document.getElementById('live-temp').textContent = formatTemperature(data.temp_supply);
             document.getElementById('live-temp-extract').textContent = formatTemperature(data.temp_extract);
             document.getElementById('live-temp-outside').textContent = formatTemperature(data.temp_outside);
             document.getElementById('live-temp-exhaust').textContent = formatTemperature(data.temp_exhaust);
@@ -529,11 +532,18 @@
                 banner.innerHTML = `<i class="fas fa-hourglass-half"></i><span><strong>Manual override</strong> · Speed ${data.commanded_speed} · ${Math.ceil(data.manual_override_secs_left / 60)} min remaining</span>`;
             } else if (data.boost) {
                 banner.className = 'status-banner is-visible boost';
-                const boostStatus = `${data.humidity}% → target ${data.boost_recovery_target.toFixed(1)}%`;
-                banner.innerHTML = `<i class="fas fa-shower"></i><span><strong>Humidity recovery</strong> · Speed ${data.commanded_speed} · ${boostStatus}</span>`;
+                // The recovery target is null until a baseline exists, and after a restart it never gets one.
+                const boostStatus = Number.isFinite(data.boost_recovery_target)
+                    ? `${data.humidity}% → target ${data.boost_recovery_target.toFixed(1)}%`
+                    : `${data.humidity}%`;
+                const guardChip = data.heat_loss_guard ? ` · heat-loss guard (−${data.heat_loss_step_down})` : '';
+                banner.innerHTML = `<i class="fas fa-shower"></i><span><strong>Humidity recovery</strong> · Speed ${data.commanded_speed} · ${boostStatus}${guardChip}</span>`;
             } else if (data.evening_cooling) {
                 banner.className = 'status-banner is-visible cooling';
                 banner.innerHTML = `<i class="fas fa-moon"></i><span><strong>Evening cooling</strong> · Speed ${data.evening_cooling_speed} · Indoor ${formatTemperature(data.temp_extract)} · Outside ${formatTemperature(data.temp_outside)}</span>`;
+            } else if (data.heat_loss_guard) {
+                banner.className = 'status-banner is-visible guard';
+                banner.innerHTML = `<i class="fas fa-temperature-arrow-down"></i><span><strong>Heat-loss guard</strong> · Speed ${data.commanded_speed} · Holding back ${data.heat_loss_step_down} step${data.heat_loss_step_down === 1 ? '' : 's'} while ${data.humidity}% keeps falling · Indoor ${formatTemperature(data.temp_extract)} · Outside ${formatTemperature(data.temp_outside)}</span>`;
             } else {
                 banner.className = 'status-banner';
                 banner.textContent = '';
@@ -608,7 +618,8 @@
             chart.options.scales.y.display = ['humidity', 'tempSupply', 'tempExtract', 'tempOutside', 'tempExhaust']
                 .some(seriesKey => chartSeriesVisibility[seriesKey]);
             chart.options.scales.y1.display = chartSeriesVisibility.rpm;
-            chart.options.scales.y2.display = chartSeriesVisibility.fanSpeed;
+            chart.options.scales.y2.display = chartSeriesVisibility.fanSpeed
+                || chartSeriesVisibility.commandedSpeed;
             chart.options.scales.y3.display = chartSeriesVisibility.bypass;
         }
 
@@ -619,6 +630,7 @@
             const humidity = data.map(d => d.humidity);
             const rpm = data.map(d => d.rpm);
             const fanSpeed = data.map(d => d.fan_speed);
+            const commandedSpeed = data.map(d => d.commanded_speed ?? null);
             const bypass = data.map(d => d.bypass_open == null
                 ? null : (d.bypass_open === true || d.bypass_open === 1 ? 1 : 0));
             const tempSupply = data.map(d => d.temp_supply ?? d.temp);
@@ -696,7 +708,8 @@
                             data: rpm,
                             borderColor: '#ef6b73',
                             yAxisID: 'y1',
-                            tension: 0.4,
+                            // No smoothing: curve fitting hides fast speed changes we need to see.
+                            tension: 0,
                             pointRadius: 0,
                             borderWidth: 2,
                             hidden: !chartSeriesVisibility.rpm
@@ -712,6 +725,18 @@
                             borderWidth: 2,
                             borderDash: [5, 3],
                             hidden: !chartSeriesVisibility.fanSpeed
+                        },
+                        {
+                            seriesKey: 'commandedSpeed',
+                            label: 'Commanded speed',
+                            data: commandedSpeed,
+                            borderColor: '#9fb4c7',
+                            yAxisID: 'y2',
+                            stepped: true,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                            spanGaps: false,
+                            hidden: !chartSeriesVisibility.commandedSpeed
                         },
                         {
                             seriesKey: 'bypass',
@@ -806,7 +831,8 @@
                         },
                         y2: {
                             type: 'linear',
-                            display: chartSeriesVisibility.fanSpeed,
+                            display: chartSeriesVisibility.fanSpeed
+                                || chartSeriesVisibility.commandedSpeed,
                             position: 'right',
                             suggestedMin: 0,
                             suggestedMax: 4,

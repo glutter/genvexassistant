@@ -30,9 +30,12 @@ Before starting, configure the add-on in the **Configuration** tab:
 - `genvex_email`: The email address registered with the Genvex unit.
 
 **Behavior:**
-- A humidity rise above the rolling baseline starts shower boost at `boost_speed` until humidity returns to that frozen baseline.
+- A humidity rise above the rolling baseline starts shower boost at `boost_speed` until the air is as dry as that frozen baseline. The comparison is made on absolute moisture, so a house that cooled during the shower still counts as recovered instead of holding boost speed in the cold.
+- `heat_loss_guard_enabled` keeps a humidity event from cooling the house. Below `heat_loss_indoor_temp_c` indoors and more than `heat_loss_temp_delta_c` warmer inside than out, the guard takes one speed off the humidity target, watches for `heat_loss_probe_minutes`, and keeps that step only if the mixing ratio fell by `heat_loss_progress_g_per_kg`. If it did not, one speed is given back and held until the air dries further on its own. It never goes below `normal_speed`, never steps down while humidity is at or above `humidity_very_high_threshold` or still within `heat_loss_peak_margin_g_per_kg` of its peak, and yields to manual override, static mode and evening cooling. A second shower restores the full boost speed at once.
 - `monitor_only` disables writes. Static and manual controls override automatic control.
 - Evening cooling requires an open bypass and suitable temperatures; normal humidity/night control resumes when it ends.
+- `humidity_hysteresis` is a deadband around every humidity threshold, so a reading that hovers on a threshold does not flip the fan target on each poll.
+- Fan setpoints are paced: a raise is sent at once, a reduction waits `fan_min_command_interval_seconds`, and a setpoint the unit keeps reverting is retried every `fan_retry_interval_seconds` until `fan_retry_attempts_before_backoff`, after which the wait doubles up to `fan_max_retry_interval_seconds` and a warning is logged. The fan then settles at whatever speed the unit insists on instead of stepping up and down.
 - `boost_duration_minutes` and `humidity_recovery_tolerance` are accepted only for upgrade compatibility.
 
 All optional settings and defaults are shown in the Configuration tab and defined in `config.json`.
