@@ -1,9 +1,9 @@
 {
   "name": "Genvex Humidity Monitor",
-  "version": "1.75",
+  "version": "1.76",
   "slug": "genvex_monitor",
   "description": "Java-based Genvex Ventilation Control and Monitoring",
-  "url": "https://github.com/lutherh/genvexassistant",
+  "url": "https://github.com/glutter/genvexassistant",
   "startup": "application",
   "arch": ["aarch64", "amd64", "armv7"],
   "homeassistant_api": true,

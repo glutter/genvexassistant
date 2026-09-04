@@ -1,5 +1,6 @@
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
@@ -357,6 +358,136 @@ class HeatLossGuardPolicyTest {
         assertEquals(2, held.stepDown());
         held = step(held, 3, 68, 10.20, T0 + 3 * PROBE + POLL);
         assertEquals("step-1 held", HeatLossGuardPolicy.describe(held, T0 + 3 * PROBE + POLL));
+    }
+
+    @Test
+    void aSecondSmallerShowerIsRecognisedEvenBelowTheFirstOnesPeak() {
+        // The case the guard was built for, in the one arrangement that used to defeat it: a damp winter
+        // evening where humidity never leaves the high band, so the policy target never changes and never
+        // drops to the floor. The first shower sets an all-time peak the second one cannot beat, and before
+        // the rising-edge check the fan stayed at the floor through the whole second event.
+        long t = T0;
+        HeatLossGuardPolicy.HeatLossState state = step(IDLE, 2, 66, moistureAt(66), t);
+        state = step(state, 2, 74, moistureAt(74), t += PROBE + POLL);
+        double firstPeak = state.peakMoisture();
+        state = step(state, 2, 74, moistureAt(74), t += PROBE + POLL);
+        assertEquals(1, state.stepDown(), "the first shower's peak goes stale and one speed is taken");
+
+        // The house dries back to where it started; the guard is left at the floor with nothing left to take.
+        for (int humidity : new int[] {70, 68, 66, 66}) {
+            state = step(state, 2, humidity, moistureAt(humidity), t += PROBE + POLL);
+            assertEquals(1, HeatLossGuardPolicy.guardedSpeed(2, 0, state, CONFIG));
+        }
+        assertEquals(firstPeak, state.peakMoisture(), "the peak is still the first shower's");
+
+        // Second shower: seven sensor counts of rise, still a quarter of a gram below the older peak.
+        double secondPeak = moistureAt(73);
+        assertTrue(secondPeak < firstPeak, "it never beats the first shower, which is the whole point");
+        assertEquals(2, policyTargetFor(73, 2), "and it does not move the policy target either");
+
+        state = step(state, 2, 73, secondPeak, t += POLL);
+        assertEquals(0, state.stepDown(), "the rise alone must hand the full target back");
+        assertEquals(2, HeatLossGuardPolicy.guardedSpeed(2, 0, state, CONFIG));
+        assertEquals(secondPeak, state.peakMoisture(), "and re-baseline the peak onto the new event");
+    }
+
+    @Test
+    void oneCountOfUpwardFlickerIsNotAFreshEvent() {
+        // The rising edge is two integer humidity counts wide at this temperature, for the same reason the
+        // peak margin is: one count of sensor noise must never move the fan, in either direction.
+        HeatLossGuardPolicy.HeatLossState state = step(IDLE, 3, 70, moistureAt(70), T0);
+        state = step(state, 3, 66, moistureAt(66), T0 + PROBE + POLL);
+        assertEquals(1, state.stepDown(), "clear of the peak margin, so one speed is taken");
+        double reference = state.referenceMoisture();
+
+        HeatLossGuardPolicy.HeatLossState flickered = step(state, 3, 67, moistureAt(67), T0 + 2 * PROBE);
+        assertEquals(1, flickered.stepDown(), "one count up is noise, not the next person's shower");
+        assertEquals(reference, flickered.referenceMoisture(), "so the guard keeps measuring against 66");
+
+        HeatLossGuardPolicy.HeatLossState risen = step(state, 3, 68, moistureAt(68), T0 + 2 * PROBE);
+        assertEquals(0, risen.stepDown(), "two counts up is a real rise and gives the target back");
+    }
+
+    @Test
+    void theLogFieldDistinguishesNotEngagedFromEngagedButNotLimiting() {
+        // Three different situations all have a step-down of zero, and reporting all three as "off" hid the
+        // one that matters: a hold blocks the next step-down, so the operator needs to see it.
+        HeatLossGuardPolicy.HeatLossState armed = step(IDLE, 3, 69, STEADY_69, T0);
+        assertEquals(0, armed.stepDown());
+        assertEquals("armed", HeatLossGuardPolicy.describe(armed, T0), "watching, but withholding nothing");
+        assertEquals("off", HeatLossGuardPolicy.describe(IDLE, T0), "and not engaged at all is still off");
+
+        // A stall at one step gives the last speed back but keeps holding, so the fan is free while the
+        // guard is not: "off" would have said the guard had let go, and the next poll would prove otherwise.
+        HeatLossGuardPolicy.HeatLossState heldAtZero =
+                step(firstProbe(10.43, 10.43, 3), 3, 68, 10.43, T0 + 2 * PROBE);
+        assertEquals(0, heldAtZero.stepDown());
+        assertTrue(heldAtZero.holding());
+        assertEquals("step-0 held", HeatLossGuardPolicy.describe(heldAtZero, T0 + 2 * PROBE));
+        assertEquals(3, HeatLossGuardPolicy.guardedSpeed(3, 0, heldAtZero, CONFIG), "the fan is unrestricted");
+    }
+
+    @Test
+    void aFreshEventIsNeverLoggedAsMoistureFallingUnaided() {
+        // The regression test for the log itself. Transitions 2 and 3 hand speed back while moisture is
+        // RISING, and reading them as a hold release printed "moisture is falling unaided again" on the same
+        // line as the new peak that had just caused it.
+        HeatLossGuardPolicy.HeatLossState probing = firstProbe(10.43, 10.20, 3);
+        assertEquals(1, probing.stepDown());
+
+        long now = T0 + PROBE + POLL;
+        HeatLossGuardPolicy.HeatLossState secondShower = step(probing, 3, 72, 10.90, now);
+        assertEquals(0, secondShower.stepDown(), "a new peak hands the full target back");
+        assertEquals("a fresh moisture event, handing every withheld speed back",
+                HeatLossGuardPolicy.describeTransition(probing, secondShower, now));
+
+        // Same for a hold broken by a rise rather than by drying.
+        HeatLossGuardPolicy.HeatLossState heldAtZero =
+                step(firstProbe(10.43, 10.43, 3), 3, 68, 10.43, T0 + 2 * PROBE);
+        assertTrue(heldAtZero.holding());
+        long later = T0 + 2 * PROBE + POLL;
+        HeatLossGuardPolicy.HeatLossState lifted = step(heldAtZero, 3, 72, 10.90, later);
+        assertFalse(lifted.holding());
+        assertEquals("a fresh moisture event, so the hold no longer applies",
+                HeatLossGuardPolicy.describeTransition(heldAtZero, lifted, later));
+    }
+
+    @Test
+    void everyLoggedTransitionSaysWhatActuallyHappened() {
+        HeatLossGuardPolicy.HeatLossState armed = step(IDLE, 3, 69, STEADY_69, T0);
+        assertNull(HeatLossGuardPolicy.describeTransition(IDLE, armed, T0),
+                "arming withholds nothing, so it is not worth a line of its own");
+
+        long stepTime = T0 + PROBE;
+        HeatLossGuardPolicy.HeatLossState probing = step(armed, 3, 69, STEADY_69, stepTime);
+        assertEquals(1, probing.stepDown());
+        assertEquals("holding back one speed to see whether the house is still drying",
+                HeatLossGuardPolicy.describeTransition(armed, probing, stepTime));
+
+        long stallTime = T0 + 2 * PROBE;
+        HeatLossGuardPolicy.HeatLossState stalled = step(probing, 3, 69, STEADY_69, stallTime);
+        assertTrue(stalled.holding());
+        assertEquals("drying stalled, giving one speed back and holding there",
+                HeatLossGuardPolicy.describeTransition(probing, stalled, stallTime));
+        assertNull(HeatLossGuardPolicy.describeTransition(stalled,
+                step(stalled, 3, 69, STEADY_69, stallTime + POLL), stallTime + POLL),
+                "still stalled is the same state, so no second line");
+
+        // A hold that ends because the air dried by itself - the one case that really is falling unaided.
+        long releaseTime = stallTime + PROBE;
+        HeatLossGuardPolicy.HeatLossState released =
+                step(stalled, 3, 60, STEADY_69 - 0.2, releaseTime);
+        assertFalse(released.holding());
+        assertEquals(stalled.stepDown(), released.stepDown(), "the hold lifts without giving speed back");
+        assertEquals("hold released, moisture is falling unaided again",
+                HeatLossGuardPolicy.describeTransition(stalled, released, releaseTime));
+
+        // And a disarm, which is the only transition that hands the fan back for good.
+        long disarmTime = releaseTime + POLL;
+        HeatLossGuardPolicy.HeatLossState off = step(probing, 3, 69, Double.NaN, disarmTime);
+        assertEquals(IDLE, off);
+        assertEquals("released, humidity control has the fan back",
+                HeatLossGuardPolicy.describeTransition(probing, off, disarmTime));
     }
 
     @Test

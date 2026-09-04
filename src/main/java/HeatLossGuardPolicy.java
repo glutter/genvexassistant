@@ -103,9 +103,26 @@ final class HeatLossGuardPolicy {
 
         // 2. The policy just asked for more air, so treat it as a fresh event and give it the full target.
         //    3. A new moisture peak - the next person's shower - does the same.
+        //    3b. So does a RISE of a full peak margin above whatever level the guard last measured, even when
+        //    it stays below an older, bigger peak. Without this the peak is an all-time high-water mark, and
+        //    the second of two showers is invisible: the first one peaks at 11.20 g/kg, the guard descends,
+        //    and a later shower taking the house from 9.97 to 11.04 - seven whole sensor counts - never beats
+        //    11.20, so the fan stays at the floor through the entire event. Only two things could have saved
+        //    it, and neither is reliable: a policy target that happens to cross an RH band, or humidity
+        //    dropping to the mid band in between so transition 1 wipes the state. Steady winter damp gives
+        //    neither. Comparing against referenceMoisture rather than the peak makes the detector a rising
+        //    edge on the current level, which is what "the next person's shower" actually looks like.
+        //    Reusing peakMarginGramsPerKg keeps the config surface unchanged and is the same idea read the
+        //    other way round: within a margin of the peak is the same event, so a margin above the current
+        //    level is a different one. It is also two integer RH counts, so single-count flicker cannot
+        //    trigger it - and unlike a spurious step-DOWN, a spurious reset errs toward more ventilation and
+        //    costs at most one probe window. It cannot ratchet either: the reset re-baselines the reference
+        //    to this reading, so the next reset needs another full margin above THIS level, which moisture
+        //    can only reach after genuinely falling first.
         if (policyTarget > current.lastPolicyTarget()
                 || !Double.isFinite(current.peakMoisture())
-                || moistureGramsPerKg > current.peakMoisture()) {
+                || moistureGramsPerKg > current.peakMoisture()
+                || moistureGramsPerKg >= current.referenceMoisture() + config.peakMarginGramsPerKg()) {
             return new HeatLossState(0, moistureGramsPerKg, nowMillis, NOT_PROBING,
                     moistureGramsPerKg, false, policyTarget);
         }
@@ -177,9 +194,27 @@ final class HeatLossGuardPolicy {
         return Math.max(coolingSpeed, Math.min(policyTarget, limited));
     }
 
-    /** One short field for the per-poll fan decision log: {@code off}, {@code step-1 probing 4m}, {@code step-2 held}. */
+    /**
+     * One short field for the per-poll fan decision log. The whole vocabulary:
+     *
+     * <ul>
+     *   <li>{@code off} - the guard is not engaged at all, which is exactly {@link HeatLossState#IDLE}
+     *   <li>{@code armed} - engaged and watching, but withholding nothing and blocking nothing
+     *   <li>{@code step-2} - two speeds withheld, between probes
+     *   <li>{@code step-1 probing 4m} - a step-down under observation, four minutes in
+     *   <li>{@code step-0 held} / {@code step-2 held} - stalled, so no further step-downs until moisture
+     *       falls unaided. {@code step-0 held} is reachable: transition 9 can give the last speed back and
+     *       still hold, and the hold is what stops the guard immediately taking that speed again.
+     * </ul>
+     *
+     * <p>The state is keyed on {@code peakMoisture} rather than on {@code stepDown}, because a step-down of
+     * zero is three different situations - not engaged, engaged and idle, engaged and holding - and reporting
+     * all three as {@code off} hid the hold, which is the one that changes what the next poll may do.
+     * {@code step-0 probing} is unreachable by construction: only transition 7 starts a probe, and it does so
+     * while taking a speed.
+     */
     static String describe(HeatLossState state, long nowMillis) {
-        if (state == null || state.stepDown() <= 0) {
+        if (state == null || !Double.isFinite(state.peakMoisture())) {
             return "off";
         }
         String detail = "";
@@ -187,8 +222,46 @@ final class HeatLossGuardPolicy {
             detail = " probing " + Math.max(0L, (nowMillis - state.probeStartTime()) / 60_000L) + "m";
         } else if (state.holding()) {
             detail = " held";
+        } else if (state.stepDown() == 0) {
+            return "armed";
         }
         return "step-" + state.stepDown() + detail;
+    }
+
+    /**
+     * The event phrase for a state change, or {@code null} when nothing worth a line happened.
+     *
+     * <p>Kept here, as a pure function, purely so it can be tested: the caller in {@code HumidityMonitor}
+     * only ever appends to the log, so a wrong phrase there is invisible to every test in the suite.
+     *
+     * <p>A fresh event is recognised by {@code peakTime == nowMillis} rather than by the step-down reaching
+     * zero. Transitions 2 and 3 - the policy asking for more air, and a new moisture peak - are the only ones
+     * that stamp the peak with the current poll's clock, and they are also the only ones that can hand speed
+     * back while moisture is <em>rising</em>. Reading them as a hold release printed "moisture is falling
+     * unaided again" on the same line as a reading that had just risen to a new peak.
+     */
+    static String describeTransition(HeatLossState previous, HeatLossState next, long nowMillis) {
+        if (previous == null || next == null) {
+            return null;
+        }
+        if (previous.stepDown() == next.stepDown() && previous.holding() == next.holding()) {
+            return null;
+        }
+        if (!Double.isFinite(next.peakMoisture())) {
+            return "released, humidity control has the fan back";
+        }
+        if (next.peakTime() == nowMillis) {
+            return previous.stepDown() > next.stepDown()
+                    ? "a fresh moisture event, handing every withheld speed back"
+                    : "a fresh moisture event, so the hold no longer applies";
+        }
+        if (next.stepDown() > previous.stepDown()) {
+            return "holding back one speed to see whether the house is still drying";
+        }
+        if (next.holding() && !previous.holding()) {
+            return "drying stalled, giving one speed back and holding there";
+        }
+        return "hold released, moisture is falling unaided again";
     }
 
     private static boolean isPlausible(double tempC) {

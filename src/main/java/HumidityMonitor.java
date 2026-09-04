@@ -1424,18 +1424,9 @@ public class HumidityMonitor {
     private void logHeatLossTransition(HeatLossGuardPolicy.HeatLossState previous,
             HeatLossGuardPolicy.HeatLossState next, double moistureGramsPerKg, double tempExtract,
             double tempOutside, long nowMillis) {
-        if (previous.stepDown() == next.stepDown() && previous.holding() == next.holding()) {
+        String event = HeatLossGuardPolicy.describeTransition(previous, next, nowMillis);
+        if (event == null) {
             return;
-        }
-        String event;
-        if (next.stepDown() > previous.stepDown()) {
-            event = "holding back one speed to see whether the house is still drying";
-        } else if (next.holding() && !previous.holding()) {
-            event = "drying stalled, giving one speed back and holding there";
-        } else if (next.stepDown() == 0) {
-            event = "released, humidity control has the fan back";
-        } else {
-            event = "hold released, moisture is falling unaided again";
         }
         log(String.format(Locale.ROOT,
                 "Heat loss guard: %s (%s, indoor %.1fC, outside %.1fC, moisture %.2f g/kg)",

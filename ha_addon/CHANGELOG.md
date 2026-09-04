@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.76
+
+- Recognise a second, smaller shower. The heat-loss guard compared moisture against the highest reading it had ever seen, so once one shower had set that mark, a later shower staying below it was invisible: on a damp evening the fan could sit at normal speed through an entire second shower. A rise of roughly two humidity points above the level last measured now counts as a new event and hands the full speed straight back.
+- Report the guard's own state honestly in the log. A new moisture event was announced as "moisture is falling unaided again" on the same line as a reading that had just risen, and the two states printed as `off` — watching without limiting the fan, and holding after a stall — are now named, so the log no longer says the guard has let go while it is still blocking the next step-down.
+- Build releases against Java 17 itself instead of against whichever JDK happens to be installed. The pinned build JDK had gone missing, so published jars were compiled against a much newer class library while still claiming to target 17, which could fail at runtime on the add-on's Java 17 base image.
+- Correct the add-on documentation: the guard's peak protection expires once the peak is older than one probe window, and a shower boost that was already running when the add-on restarted finishes on the relative-humidity comparison rather than the absolute one.
+- Point the repository and the install instructions at `github.com/glutter/genvexassistant`.
+
 ## 1.75
 
 - Fix the heat-loss guard walking the fan straight to normal speed during a humidity event: one count of sensor flicker across the moisture peak used to cost a whole fan speed with no ten-minute window ever measured, so the fan could reach normal speed 90 seconds into a shower and stay there.
