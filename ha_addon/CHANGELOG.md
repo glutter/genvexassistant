@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.75
+
+- Fix the heat-loss guard walking the fan straight to normal speed during a humidity event: one count of sensor flicker across the moisture peak used to cost a whole fan speed with no ten-minute window ever measured, so the fan could reach normal speed 90 seconds into a shower and stay there.
+
 ## 1.74
 
 - Add a heat-loss guard: in cold weather, humidity-driven ventilation now steps down one speed at a time and keeps each step only while the house is measurably still drying, instead of holding a high speed for hours and cooling the house.

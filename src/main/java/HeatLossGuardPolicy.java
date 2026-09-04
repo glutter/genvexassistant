@@ -110,13 +110,20 @@ final class HeatLossGuardPolicy {
                     moistureGramsPerKg, false, policyTarget);
         }
 
-        // 4. Moisture is still at its recent peak, so the event is still running: hold, and drop any probe
-        //    the rise invalidated. The peak time is deliberately not refreshed here - otherwise moisture
-        //    hovering just under the peak would pin the fan down for ever.
+        // 4. Moisture is still at its recent peak, so the event is still running: hold the current step, and
+        //    carry any probe forward rather than cancelling it. Cancelling looks tidier but costs a whole
+        //    speed: transition 7 only knows how to take ANOTHER one, so a probe dropped on the way back into
+        //    the margin is replaced by a fresh step-down on the way back out, with no window ever scored. The
+        //    margin is about two integer RH counts wide, so one count of sensor flicker straddles it and the
+        //    fan would walk to the floor in three polls. Carried forward, the window is scored at its proper
+        //    deadline, and a window containing a rise scores as a stall - which gives the speed back. The
+        //    probe always starts after the peak, so the peak goes stale first and can never delay a scoring.
+        //    The peak time is deliberately not refreshed here - otherwise moisture hovering just under the
+        //    peak would pin the fan down for ever.
         boolean peakIsFresh = nowMillis - current.peakTime() < config.probeWindowMillis();
         if (peakIsFresh && moistureGramsPerKg >= current.peakMoisture() - config.peakMarginGramsPerKg()) {
             return new HeatLossState(current.stepDown(), current.peakMoisture(), current.peakTime(),
-                    NOT_PROBING, current.referenceMoisture(), current.holding(), policyTarget);
+                    current.probeStartTime(), current.referenceMoisture(), current.holding(), policyTarget);
         }
 
         if (current.holding()) {
