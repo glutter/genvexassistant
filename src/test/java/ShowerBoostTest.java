@@ -1,3 +1,4 @@
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -86,6 +87,129 @@ class ShowerBoostTest {
     @Test
     void humidityAboveBaselineDoesNotEndShowerBoost() {
         assertFalse(HumidityMonitor.shouldDeactivateBoost(46, 45.0, NO_MOISTURE, NO_MOISTURE));
+    }
+
+    private static HumidityMonitor.BoostRecoveryProgress progress() {
+        return new HumidityMonitor.BoostRecoveryProgress(1_800_000L, 75_000L);
+    }
+
+    @Test
+    void restoredBoostWithSlowWeatherRiseReleasesAfterAFullObservationWindow() {
+        HumidityMonitor.ControlState restored = HumidityMonitor.restorableControlState(true,
+                new HumidityMonitor.ControlState(true, 52.0, 0L));
+        HumidityMonitor.BoostRecoveryProgress progress = progress();
+        HumidityMonitor.HumidityRiseDetector detector = detector();
+        boolean active = restored.boostActive();
+        for (int poll = 0; poll <= 120; poll++) {
+            int humidity = 65 + Math.min(3, poll / 30);
+            double moisture = HumidityPhysics.mixingRatioGramsPerKg(humidity, 22.0);
+            boolean rapidRise = detector.update(humidity, 64.0, poll * 30_000L, POLICY);
+            assertFalse(rapidRise);
+            if (active && (HumidityMonitor.shouldDeactivateBoost(humidity, restored.boostBaseline(),
+                    moisture, Double.NaN) || progress.update(humidity, moisture, rapidRise, true,
+                    poll * 30_000L))) {
+                active = false;
+                detector.reset();
+            }
+            assertEquals(poll < 60, active, "Recovery state at poll " + poll);
+        }
+        assertEquals(2, HumidityMonitor.selectAutomaticSpeed(68, false, 0, 30, 65, 1, 3, 3));
+        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(80, POLICY, 0, 3, 3));
+    }
+
+    @Test
+    void measurableDryingKeepsBoostAcrossMultipleWindows() {
+        HumidityMonitor.BoostRecoveryProgress progress = progress();
+        for (int poll = 0; poll <= 180; poll++) {
+            assertFalse(progress.update(70 - poll / 20, 12.0 - poll * 0.01, false, true,
+                    poll * 30_000L));
+        }
+    }
+
+    @Test
+    void recoveryThatInitiallyDriesButLaterStallsAlsoReleases() {
+        HumidityMonitor.BoostRecoveryProgress progress = progress();
+        for (int poll = 0; poll < 120; poll++) {
+            double moisture = 12.0 - Math.min(60, poll) * 0.01;
+            assertFalse(progress.update(70, moisture, false, true, poll * 30_000L));
+        }
+        assertTrue(progress.update(70, 11.4, false, true, 3_600_000L));
+    }
+
+    @Test
+    void newShowerNearTheDeadlineGetsAFreshProgressWindow() {
+        HumidityMonitor.BoostRecoveryProgress progress = progress();
+        for (int poll = 0; poll < 120; poll++) {
+            assertFalse(progress.update(poll < 60 ? 65 : 75, poll < 60 ? 10.0 : 12.0,
+                    poll == 60, true, poll * 30_000L));
+        }
+        assertTrue(progress.update(75, 12.0, false, true, 3_600_000L));
+    }
+
+    @Test
+    void coolingAirIsJudgedByMoistureNotRisingRelativeHumidity() {
+        HumidityMonitor.BoostRecoveryProgress progress = progress();
+        for (int poll = 0; poll <= 60; poll++) {
+            int humidity = 65 + poll / 30;
+            double temperature = 22.0 - poll * 0.025;
+            assertFalse(progress.update(humidity,
+                    HumidityPhysics.mixingRatioGramsPerKg(humidity, temperature), false, true,
+                    poll * 30_000L));
+        }
+    }
+
+    @Test
+    void missingTemperatureUsesTwoHumidityPointsAndRejectsSinglePointJitter() {
+        for (int fall : new int[] {1, 2}) {
+            HumidityMonitor.BoostRecoveryProgress progress = progress();
+            for (int poll = 0; poll < 60; poll++) {
+                assertFalse(progress.update(65, NO_MOISTURE, false, true, poll * 30_000L));
+            }
+            assertEquals(fall < 2, progress.update(65 - fall, NO_MOISTURE, false, true, 1_800_000L));
+        }
+    }
+
+    @Test
+    void gapsSuspensionAndMetricChangesCannotCountAsACompleteWindow() {
+        for (int interruption = 0; interruption < 5; interruption++) {
+            HumidityMonitor.BoostRecoveryProgress progress = progress();
+            for (int poll = 0; poll < 30; poll++) {
+                assertFalse(progress.update(65, 10.0, false, true, poll * 30_000L));
+            }
+            switch (interruption) {
+                case 0 -> assertFalse(progress.update(65, 10.0, false, false, 900_000L));
+                case 1 -> assertFalse(progress.update(-1, 10.0, false, true, 900_000L));
+                case 2 -> progress.reset();
+            }
+            long restart = interruption == 3 ? 1_000_000L : 900_000L;
+            double moisture = interruption == 4 ? NO_MOISTURE : 10.0;
+            for (int poll = 0; poll < 60; poll++) {
+                assertFalse(progress.update(65, moisture, false, true, restart + poll * 30_000L),
+                        "Interruption " + interruption + " at poll " + poll);
+            }
+            assertTrue(progress.update(65, moisture, false, true, restart + 1_800_000L));
+        }
+    }
+
+    @Test
+    void progressStartsOnlyOnceBoostAirflowIsActuallyObserved() {
+        HumidityMonitor.BoostRecoveryProgress progress = progress();
+        for (int poll = 0; poll < 80; poll++) {
+            assertFalse(progress.update(65, 10.0, false, poll >= 20, poll * 30_000L));
+        }
+        assertTrue(progress.update(65, 10.0, false, true, 2_400_000L));
+    }
+
+    @Test
+    void backwardsClockStartsAFreshProgressWindow() {
+        HumidityMonitor.BoostRecoveryProgress progress = progress();
+        for (int poll = 0; poll < 60; poll++) {
+            assertFalse(progress.update(65, 10.0, false, true, 3_600_000L + poll * 30_000L));
+        }
+        for (int poll = 0; poll < 60; poll++) {
+            assertFalse(progress.update(65, 10.0, false, true, 3_600_000L + poll * 30_000L));
+        }
+        assertTrue(progress.update(65, 10.0, false, true, 5_400_000L));
     }
 
     @Test

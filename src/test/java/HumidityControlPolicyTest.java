@@ -207,6 +207,28 @@ class HumidityControlPolicyTest {
         assertEquals(4, HumidityMonitor.estimateFanSpeed(3600, 10000));
     }
 
+        @Test
+        void zeroReadbackDoesNotRetryAFanAlreadyRunningAtTheRequestedSpeed() {
+                for (int speed : new int[] {2, 3}) {
+                        assertEquals(-1, HumidityMonitor.effectiveFanSetpoint(0, speed));
+                        boolean held = HumidityMonitor.setpointHeld(speed, speed, 0);
+                        assertTrue(held);
+                        assertFalse(HumidityMonitor.decideFanCommand(false, false, held, 1_800_000L, 0L,
+                                        6, DEFAULT_PACING).send());
+                }
+        }
+
+        @Test
+        void zeroReadbackStillDetectsRealSpeedMismatchesAndStoppedFans() {
+                assertFalse(HumidityMonitor.setpointHeld(3, 2, 0));
+                assertFalse(HumidityMonitor.setpointHeld(2, 0, 0));
+                assertFalse(HumidityMonitor.setpointHeld(0, 3, 0));
+                assertTrue(HumidityMonitor.setpointHeld(0, 0, 0));
+                assertEquals(0, HumidityMonitor.effectiveFanSetpoint(0, 0));
+                assertEquals(2, HumidityMonitor.effectiveFanSetpoint(2, 3));
+                assertEquals(-1, HumidityMonitor.effectiveFanSetpoint(8, 3));
+        }
+
     @Test
     void showerBoostKeepsFullSpeedUntilHumidityRecovers() {
         assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(60, DEFAULT_POLICY, 0, 3,

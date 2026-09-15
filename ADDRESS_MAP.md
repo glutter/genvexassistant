@@ -13,7 +13,7 @@ Verified Micro Nabto addresses used by this project.
 | Function | Read Address | Unit/Conversion | Notes |
 |----------|--------------|-----------------|-------|
 | **Fan Speed (Status)** | **7** | N/A | **Inactive/Broken**. Always reads `0` on this firmware version. Use Duty Cycle or RPM to verify state. |
-| **Fan Speed (Setpoint)** | **24** | `0`-`4` | Read-back of the written setpoint. Available on the target unit; values outside `0`-`4` and read failures are treated as unknown, and control falls back to the duty-derived speed. |
+| **Fan Speed (Setpoint)** | **24** | `0`-`4` | Not reliable on all firmware: can return `0` while duty and RPM correctly follow speed 2 or 3. Zero while the fan is running, values outside `0`-`4`, and read failures are treated as unknown; startup and feedback then use the duty-derived speed. Zero with a stopped fan remains valid. |
 | **Supply Fan Duty** | **18** | % (Raw / 100) | E.g., `3000` = 30%, `5000` = 50%. Reliable indicator of fan state. Per speed: `1` = 30%, `2` = 50%, `3` = 70%, `4` = 100%; the measured duty is matched to the nearest of these. |
 | **Extract Fan Duty** | **19** | % (Raw / 100) | |
 | **Supply Fan RPM** | **35** | RPM | E.g., `1068` RPM. |

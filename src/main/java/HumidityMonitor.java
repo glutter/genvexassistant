@@ -60,6 +60,9 @@ public class HumidityMonitor {
     private static final int HUMIDITY_BASELINE_MINUTES = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_BASELINE_MINUTES", "30"));
     private static final int HUMIDITY_RECOVERY_TOLERANCE = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_RECOVERY_TOLERANCE", "1"));
     private static final long HUMIDITY_RISE_WINDOW_MS = 5 * 60_000L;
+    private static final long BOOST_PROGRESS_WINDOW_MS = 30 * 60_000L;
+    private static final double BOOST_PROGRESS_G_PER_KG = 0.3;
+    private static final int BOOST_PROGRESS_HUMIDITY_POINTS = 2;
 
     // General Control Configuration
     private static final int HUMIDITY_VERY_HIGH_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_VERY_HIGH_THRESHOLD", "80"));
@@ -127,6 +130,8 @@ public class HumidityMonitor {
     // a relative humidity so an older binary can still read it. A boost restored from disk therefore has a
     // NaN moisture baseline and exits on the legacy relative-humidity comparison instead.
     private double boostBaselineMoisture = Double.NaN;
+        private final BoostRecoveryProgress boostRecoveryProgress = new BoostRecoveryProgress(
+            BOOST_PROGRESS_WINDOW_MS, POLL_INTERVAL * 2_500L);
     private int commandedFanSpeed = -1;
     // The speed humidity control asked for, before the heat-loss guard limited it. Kept apart from
     // commandedFanSpeed because it is the hysteresis latch: feeding the guard's own reduced write back in
@@ -137,6 +142,7 @@ public class HumidityMonitor {
     private FanCommandFeedback fanCommandFeedback = new FanCommandFeedback(0, -1);
     private boolean setpointReadbackUnavailableLogged = false;
     private boolean setpointReadbackAvailable = false;
+    private boolean zeroSetpointReadbackLogged = false;
     private int dbErrorCount = 0;
     // Manual override (Udluftning)
     private volatile boolean manualOverrideActive = false;
@@ -696,10 +702,6 @@ public class HumidityMonitor {
             double tempExhaust = rawTemperature(tempExhaustRaw, tempSensorOffsetRaw);
             double tempExtract = rawTemperature(tempExtractRaw, tempSensorOffsetRaw);
 
-            // Runs after the temperature conversions so the recovery test can convert this poll's humidity
-            // to a mixing ratio with this poll's indoor temperature rather than the previous poll's.
-            checkBoostLogic(humidity, baselines, tempExtract);
-
             DefrostState defrostState = detectDefrostState(supplyRpm, extractRpm, tempSupply);
             boolean isDefrosting = defrostState != DefrostState.INACTIVE;
             if (defrostState == DefrostState.ACTIVE) {
@@ -709,7 +711,9 @@ public class HumidityMonitor {
             }
 
             int observedFanSpeed = estimateFanSpeed(supplyRpm, supplyDuty);
-            int setpointReadback = readFanSetpoint();
+                checkBoostLogic(humidity, baselines, tempExtract,
+                    !isDefrosting && observedFanSpeed >= Math.max(BOOST_SPEED, NORMAL_SPEED));
+            int setpointReadback = readFanSetpoint(observedFanSpeed);
             if (commandedFanSpeed == -1) {
                 // After a restart the unit's own setpoint is what we are actually tracking; the
                 // duty-derived speed is only the fallback when the read-back is unavailable.
@@ -753,6 +757,7 @@ public class HumidityMonitor {
         } catch (Exception e) {
             logError("Error polling data: " + e.getMessage());
             fanCommandFeedback = new FanCommandFeedback(fanCommandFeedback.attempts(), -1);
+            boostRecoveryProgress.reset();
             e.printStackTrace();
             return null;
         } finally {
@@ -770,9 +775,15 @@ public class HumidityMonitor {
      * apart from "the unit kept the setpoint but is running a different duty". The read is optional:
      * some firmware revisions do not expose it, so failures degrade to the duty-derived estimate.
      */
-    private int readFanSetpoint() throws InterruptedException {
+    private int readFanSetpoint(int observedFanSpeed) throws InterruptedException {
         try {
-            int value = normalizeFanSetpoint(client.readDatapoint(24, 1));
+            int rawValue = client.readDatapoint(24, 1);
+            int value = effectiveFanSetpoint(rawValue, observedFanSpeed);
+            if (rawValue == 0 && observedFanSpeed > 0 && !zeroSetpointReadbackLogged) {
+                zeroSetpointReadbackLogged = true;
+                log("Fan setpoint read-back is 0 while the fan is running; using duty-derived speed"
+                        + " for this inconsistent read-back.");
+            }
             if (value >= 0 && !setpointReadbackAvailable) {
                 setpointReadbackAvailable = true;
                 log("Fan speed setpoint read-back (address 24) is available on this firmware.");
@@ -790,6 +801,10 @@ public class HumidityMonitor {
 
     static int normalizeFanSetpoint(int rawValue) {
         return rawValue >= 0 && rawValue <= 4 ? rawValue : -1;
+    }
+
+    static int effectiveFanSetpoint(int rawValue, int observedFanSpeed) {
+        return rawValue == 0 && observedFanSpeed > 0 ? -1 : normalizeFanSetpoint(rawValue);
     }
 
     private static String fanSetpointLabel(int setpointReadback) {
@@ -860,6 +875,7 @@ public class HumidityMonitor {
 
     private void restoreControlState(ControlState state) {
         ControlState restored = restorableControlState(BOOST_ENABLED, state);
+        boostRecoveryProgress.reset();
         boostActive = restored.boostActive();
         boostBaselineHumidity = restored.boostBaseline();
         boostEndTime = restored.boostEnd();
@@ -1266,14 +1282,16 @@ public class HumidityMonitor {
 
     /**
      * Whether the unit is running the speed we last commanded. The address 24 read-back is
-     * authoritative when the firmware exposes it; otherwise fall back to the duty-derived estimate.
+    * authoritative unless it reports off while the fan is running; missing or inconsistent read-back
+    * falls back to the duty-derived estimate.
      */
     static boolean setpointHeld(int commandedSpeed, int observedFanSpeed, int setpointReadback) {
         if (commandedSpeed < 0) {
             return false;
         }
-        if (setpointReadback >= 0) {
-            return setpointReadback == commandedSpeed;
+        int effectiveSetpoint = effectiveFanSetpoint(setpointReadback, observedFanSpeed);
+        if (effectiveSetpoint >= 0) {
+            return effectiveSetpoint == commandedSpeed;
         }
         return observedFanSpeed == commandedSpeed;
     }
@@ -1338,6 +1356,51 @@ public class HumidityMonitor {
 
     static double humidityRecoveryTarget(double baselineHumidity) {
         return baselineHumidity;
+    }
+
+    static final class BoostRecoveryProgress {
+        private final long windowMillis;
+        private final long maxGapMillis;
+        private long windowStart = -1;
+        private long lastSample = -1;
+        private double reference;
+        private boolean usingMoisture;
+
+        BoostRecoveryProgress(long windowMillis, long maxGapMillis) {
+            this.windowMillis = windowMillis;
+            this.maxGapMillis = maxGapMillis;
+        }
+
+        boolean update(int humidity, double moisture, boolean rapidRise, boolean ventilating, long now) {
+            if (!ventilating || humidity < 0 || humidity > 100) {
+                reset();
+                return false;
+            }
+            boolean hasMoisture = Double.isFinite(moisture);
+            double current = hasMoisture ? moisture : humidity;
+            if (windowStart < 0 || rapidRise || hasMoisture != usingMoisture
+                    || now <= lastSample || now - lastSample > maxGapMillis) {
+                reference = current;
+                windowStart = now;
+                lastSample = now;
+                usingMoisture = hasMoisture;
+                return false;
+            }
+            lastSample = now;
+            if (now - windowStart < windowMillis) {
+                return false;
+            }
+                boolean stalled = current > reference - (usingMoisture
+                    ? BOOST_PROGRESS_G_PER_KG : BOOST_PROGRESS_HUMIDITY_POINTS);
+            reference = current;
+            windowStart = now;
+            return stalled;
+        }
+
+        void reset() {
+            windowStart = -1;
+            lastSample = -1;
+        }
     }
 
     /**
@@ -1629,9 +1692,11 @@ public class HumidityMonitor {
         }
     }
 
-    private void checkBoostLogic(int currentHumidity, HistoricalBaselines baselines, double tempExtract) {
-        if (!BOOST_ENABLED || monitorOnly || staticRpmMode) {
+    private void checkBoostLogic(int currentHumidity, HistoricalBaselines baselines, double tempExtract,
+            boolean boostVentilationActive) {
+        if (!BOOST_ENABLED || monitorOnly || staticRpmMode || restartInProgress.get()) {
             humidityRiseDetector.reset();
+            boostRecoveryProgress.reset();
             return;
         }
 
@@ -1665,12 +1730,22 @@ public class HumidityMonitor {
                             "Humidity recovered (%d%%, recovery target %.1f%%). Deactivating Boost.",
                             currentHumidity, humidityRecoveryTarget(boostBaselineHumidity)));
                 deactivateBoost();
+                } else if (boostRecoveryProgress.update(currentHumidity, moisture, rapidRise,
+                    boostVentilationActive && !(manualOverrideActive && now < manualOverrideEndTime), now)) {
+                log(String.format(Locale.ROOT,
+                    "Shower boost stalled: no moisture fall of %.1f %s over %d min at boost speed"
+                    + " (current %d%%, recovery target %.1f%%). Returning to normal humidity control.",
+                        Double.isFinite(moisture) ? BOOST_PROGRESS_G_PER_KG : BOOST_PROGRESS_HUMIDITY_POINTS,
+                    Double.isFinite(moisture) ? "g/kg" : "humidity points",
+                    BOOST_PROGRESS_WINDOW_MS / 60_000, currentHumidity, boostBaselineHumidity));
+                deactivateBoost();
             }
         }
     }
 
     private void activateBoost(int activationHumidity, double baselineHumidity,
             double baselineMoisture, double tempExtract) {
+        boostRecoveryProgress.reset();
         boostActive = true;
         boostBaselineHumidity = baselineHumidity;
         // Not persisted: the boost_baseline column stays a relative humidity so an older binary can still
@@ -1683,16 +1758,18 @@ public class HumidityMonitor {
         log(Double.isFinite(boostBaselineMoisture)
                 ? String.format(Locale.ROOT,
                     "Shower boost activated at %d%% humidity; maintaining boost until moisture returns to"
-                    + " %.2f g/kg (pre-rise baseline %.1f%% RH).",
+                    + " %.2f g/kg (pre-rise baseline %.1f%% RH), or drying stalls.",
                     activationHumidity, boostBaselineMoisture, baselineHumidity)
                 : String.format(Locale.ROOT,
-                    "Shower boost activated at %d%% humidity; maintaining boost until humidity returns to %.1f%%.",
+                    "Shower boost activated at %d%% humidity; maintaining boost until humidity returns to %.1f%%"
+                    + ", or drying stalls.",
                     activationHumidity, baselineHumidity));
     }
 
     private void deactivateBoost() {
         boostActive = false;
         humidityRiseDetector.reset();
+        boostRecoveryProgress.reset();
         boostBaselineHumidity = Double.NaN;
         boostBaselineMoisture = Double.NaN;
         boostEndTime = 0;

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.78
+
+- Release a shower boost that makes no measurable drying progress over 30 minutes at the observed boost speed, including boosts restored with an obsolete pre-shower baseline. Require a fall of at least 0.3 g/kg, or 2 humidity percentage points when extract temperature is unavailable. Ordinary high-humidity protection remains active after release.
+- Keep boost while the air is still drying, and start a fresh progress window for a new rapid humidity rise. Manual control, monitor/static mode, defrost, reduced fan speed, missing readings and changes of measurement basis cannot count as a completed progress window. Restarting begins a new observation window without discarding the persisted recovery baseline.
+- Treat a fan setpoint read-back of zero as unavailable while the fan is running. Use the duty-derived speed for startup and command feedback in that case, preventing repeated writes and false rejection warnings when the unit already runs at the requested speed. Real speed mismatches still use paced retries.
+- Add regression coverage for restored boosts during slow weather drift, continuing drying, stalled recovery, new showers, interrupted observation windows and zero-readback feedback.
+
 ## 1.77
 
 - Require the configured humidity rise (4 percentage points by default) within 5 minutes as well as above the rolling baseline before starting shower boost. Slow weather-related humidity drift no longer qualifies just because it accumulates above that baseline; ordinary high-humidity protection is unchanged.
