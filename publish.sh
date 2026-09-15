@@ -28,6 +28,11 @@ echo "Detected Version: v$VERSION"
 echo "Copying target/genvex-integration-${VERSION}.jar to ha_addon/app.jar..."
 cp "target/genvex-integration-${VERSION}.jar" ha_addon/app.jar
 
+if [[ "${1:-}" == "--build-only" ]]; then
+    echo "Local build v${VERSION} complete. No files staged, committed or pushed."
+    exit 0
+fi
+
 # 4. Git operations
 echo "Staging files for commit..."
 git add ADDRESS_MAP.md README.md repository.json publish.sh pom.xml src/ \

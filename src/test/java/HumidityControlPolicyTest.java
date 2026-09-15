@@ -114,8 +114,39 @@ class HumidityControlPolicyTest {
                 false, false, true, 10_000_000L, 0, 2, DEFAULT_PACING);
 
         assertFalse(decision.send());
-        assertEquals(0, decision.attempts());
+                assertEquals(2, decision.attempts());
     }
+
+        @Test
+        void briefAcceptanceDoesNotEraseRetryBackoff() {
+                HumidityMonitor.FanCommandFeedback feedback = new HumidityMonitor.FanCommandFeedback(4, -1);
+                feedback = HumidityMonitor.updateFanCommandFeedback(feedback, true, 30_000L, DEFAULT_PACING);
+                assertEquals(4, feedback.attempts());
+                feedback = HumidityMonitor.updateFanCommandFeedback(feedback, false, 180_000L, DEFAULT_PACING);
+                assertEquals(-1, feedback.settledSince());
+
+                HumidityMonitor.FanCommandDecision decision = HumidityMonitor.decideFanCommand(
+                                false, false, false, 180_000L, 0L, feedback.attempts(), DEFAULT_PACING);
+                assertFalse(decision.send());
+                assertEquals(300_000L, decision.waitMillis());
+                assertEquals(4, decision.attempts());
+                assertTrue(HumidityMonitor.decideFanCommand(false, false, false, 480_000L, 0L,
+                                feedback.attempts(), DEFAULT_PACING).send());
+        }
+
+        @Test
+        void retryBackoffResetsOnlyAfterAnUninterruptedStableWindow() {
+                HumidityMonitor.FanCommandFeedback feedback = new HumidityMonitor.FanCommandFeedback(4, -1);
+                feedback = HumidityMonitor.updateFanCommandFeedback(feedback, true, 0L, DEFAULT_PACING);
+                feedback = HumidityMonitor.updateFanCommandFeedback(feedback, true, 1_799_999L, DEFAULT_PACING);
+                assertEquals(4, feedback.attempts());
+                feedback = HumidityMonitor.updateFanCommandFeedback(feedback, false, 1_800_000L, DEFAULT_PACING);
+                feedback = HumidityMonitor.updateFanCommandFeedback(feedback, true, 1_830_000L, DEFAULT_PACING);
+                feedback = HumidityMonitor.updateFanCommandFeedback(feedback, true, 3_629_999L, DEFAULT_PACING);
+                assertEquals(4, feedback.attempts());
+                feedback = HumidityMonitor.updateFanCommandFeedback(feedback, true, 3_630_000L, DEFAULT_PACING);
+                assertEquals(0, feedback.attempts());
+        }
 
     @Test
     void raisingSpeedIsSentImmediatelyButLoweringWaitsOutTheMinimumSpacing() {

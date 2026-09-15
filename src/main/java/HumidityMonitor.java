@@ -12,6 +12,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayDeque;
 import java.util.Locale;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ExecutorService;
@@ -58,6 +59,7 @@ public class HumidityMonitor {
     private static final long BOOST_DURATION_MS = Integer.parseInt(System.getenv().getOrDefault("BOOST_DURATION_MINUTES", "15")) * 60 * 1000L;
     private static final int HUMIDITY_BASELINE_MINUTES = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_BASELINE_MINUTES", "30"));
     private static final int HUMIDITY_RECOVERY_TOLERANCE = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_RECOVERY_TOLERANCE", "1"));
+    private static final long HUMIDITY_RISE_WINDOW_MS = 5 * 60_000L;
 
     // General Control Configuration
     private static final int HUMIDITY_VERY_HIGH_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_VERY_HIGH_THRESHOLD", "80"));
@@ -108,7 +110,8 @@ public class HumidityMonitor {
 
     // State
     private int lastHumidity = -1;
-    private long lastHumidityTime = 0;
+        private final HumidityRiseDetector humidityRiseDetector = new HumidityRiseDetector(
+            HUMIDITY_RISE_WINDOW_MS, POLL_INTERVAL * 2_500L);
     private double lastSupplyTemp = -1.0;
     private double lastOutsideTemp = -1.0;
     private double lastExhaustTemp = -1.0;
@@ -131,7 +134,7 @@ public class HumidityMonitor {
     private int policyTargetSpeed = -1;
     private long lastFanCommandTime = 0;
     private int lastObservedFanSpeed = -1;
-    private int fanCommandAttempts = 0;
+    private FanCommandFeedback fanCommandFeedback = new FanCommandFeedback(0, -1);
     private boolean setpointReadbackUnavailableLogged = false;
     private boolean setpointReadbackAvailable = false;
     private int dbErrorCount = 0;
@@ -736,7 +739,6 @@ public class HumidityMonitor {
                 + ", FanSetpoint=" + fanSetpointLabel(setpointReadback));
 
             lastHumidity = humidity;
-            lastHumidityTime = System.currentTimeMillis();
             lastSupplyTemp = tempSupply;
             lastOutsideTemp = tempOutside;
             lastExhaustTemp = tempExhaust;
@@ -750,6 +752,7 @@ public class HumidityMonitor {
 
         } catch (Exception e) {
             logError("Error polling data: " + e.getMessage());
+            fanCommandFeedback = new FanCommandFeedback(fanCommandFeedback.attempts(), -1);
             e.printStackTrace();
             return null;
         } finally {
@@ -919,7 +922,7 @@ public class HumidityMonitor {
                 commandedFanSpeed = speed;
                 policyTargetSpeed = speed;
                 lastFanCommandTime = System.currentTimeMillis();
-                fanCommandAttempts = 0;
+                fanCommandFeedback = new FanCommandFeedback(0, -1);
             } finally {
                 client.disconnect();
             }
@@ -989,11 +992,13 @@ public class HumidityMonitor {
             int observedFanSpeed, int supplyDuty, boolean isDefrosting, int bypassState,
             int setpointReadback) {
         if (restartInProgress.get()) {
+            fanCommandFeedback = new FanCommandFeedback(fanCommandFeedback.attempts(), -1);
             resetHeatLossGuard();
             log("Maintenance restart active. Automatic fan control paused.");
             return;
         }
         if (monitorOnly) {
+            fanCommandFeedback = new FanCommandFeedback(fanCommandFeedback.attempts(), -1);
             resetEveningCooling();
             resetHeatLossGuard();
             log("Monitor mode active. Recommended speed: " + NORMAL_SPEED + " (Reason: Monitor Only)");
@@ -1095,15 +1100,17 @@ public class HumidityMonitor {
         // the controller believes the fan should be off, so the setpoint has not taken effect.
         boolean fanStopped = targetSpeed > 0 && supplyDuty == 0 && !isDefrosting;
         boolean held = setpointHeld(commandedFanSpeed, observedFanSpeed, setpointReadback);
-        if (held && !fanStopped && fanCommandAttempts > 0) {
-            log("Genvex is holding fan setpoint " + commandedFanSpeed + " again after "
-                    + fanCommandAttempts + " attempt(s).");
-            fanCommandAttempts = 0;
+        int previousAttempts = fanCommandFeedback.attempts();
+        fanCommandFeedback = updateFanCommandFeedback(fanCommandFeedback,
+            held && !fanStopped && !isDefrosting, nowMillis, FAN_PACING);
+        if (previousAttempts > 0 && fanCommandFeedback.attempts() == 0) {
+            log("Genvex has stably held fan setpoint " + commandedFanSpeed + " after "
+                + previousAttempts + " attempt(s). Resetting retry backoff.");
         }
 
         FanCommandDecision decision = decideFanCommand(targetSpeed != commandedFanSpeed,
                 targetSpeed > commandedFanSpeed, held && !fanStopped, nowMillis, lastFanCommandTime,
-                fanCommandAttempts, FAN_PACING);
+            fanCommandFeedback.attempts(), FAN_PACING);
 
         // Defrost is decided last so the diagnostic line still reports one outcome per poll: the
         // controller drives the fan itself while defrosting, and it keeps our setpoint for afterwards.
@@ -1114,7 +1121,7 @@ public class HumidityMonitor {
             "Fan decision: target=%d (%s) commanded=%d observed=%d duty=%d%% setpoint=%s settled=%b"
             + " attempts=%d guard=%s -> %s",
             targetSpeed, reason, commandedFanSpeed, observedFanSpeed, supplyDuty / 100,
-            fanSetpointLabel(setpointReadback), held && !fanStopped, fanCommandAttempts,
+            fanSetpointLabel(setpointReadback), held && !fanStopped, fanCommandFeedback.attempts(),
             HeatLossGuardPolicy.describe(heatLossState, nowMillis), outcome));
 
         if (isDefrosting || !decision.send()) {
@@ -1134,15 +1141,16 @@ public class HumidityMonitor {
             // Record the attempt even when the write failed, so a broken link is paced the same way
             // as a rejected setpoint instead of being retried on every poll.
             lastFanCommandTime = nowMillis;
-            fanCommandAttempts = decision.attempts();
+            fanCommandFeedback = new FanCommandFeedback(decision.attempts(), -1);
         }
 
-        if (fanCommandAttempts > FAN_PACING.attemptsBeforeBackoff()) {
+        if (fanCommandFeedback.attempts() > FAN_PACING.attemptsBeforeBackoff()) {
             log(String.format(Locale.ROOT,
                 "Genvex is not holding fan setpoint %d (observed %d, duty %d%%, setpoint read-back %s)"
                 + " after %d attempts. Backing off; next attempt in %d min.",
                 targetSpeed, observedFanSpeed, supplyDuty / 100, fanSetpointLabel(setpointReadback),
-                fanCommandAttempts, retryIntervalMillis(fanCommandAttempts, FAN_PACING) / 60_000));
+                fanCommandFeedback.attempts(),
+                retryIntervalMillis(fanCommandFeedback.attempts(), FAN_PACING) / 60_000));
         }
     }
 
@@ -1201,6 +1209,19 @@ public class HumidityMonitor {
 
     record FanCommandDecision(boolean send, int attempts, long waitMillis) {}
 
+    record FanCommandFeedback(int attempts, long settledSince) {}
+
+    static FanCommandFeedback updateFanCommandFeedback(FanCommandFeedback feedback,
+            boolean settled, long now, FanCommandPacing pacing) {
+        if (!settled) {
+            return new FanCommandFeedback(feedback.attempts(), -1);
+        }
+        long settledSince = feedback.settledSince() < 0 || now < feedback.settledSince()
+                ? now : feedback.settledSince();
+        int attempts = now - settledSince >= pacing.maxRetryIntervalMillis() ? 0 : feedback.attempts();
+        return new FanCommandFeedback(attempts, settledSince);
+    }
+
     /**
      * Decides whether to write the fan setpoint on this poll.
      *
@@ -1226,7 +1247,7 @@ public class HumidityMonitor {
                     : new FanCommandDecision(false, attempts, required - elapsed);
         }
         if (settled) {
-            return new FanCommandDecision(false, 0, 0);
+            return new FanCommandDecision(false, attempts, 0);
         }
         long required = Math.max(pacing.minIntervalMillis(), retryIntervalMillis(attempts, pacing));
         return elapsed >= required
@@ -1275,6 +1296,44 @@ public class HumidityMonitor {
     static boolean hasHumidityRise(int humidity, double baselineHumidity, HumidityPolicy policy) {
         return Double.isFinite(baselineHumidity)
             && humidity - baselineHumidity >= policy.riseThreshold();
+    }
+
+    static final class HumidityRiseDetector {
+        private record Reading(int humidity, long time) {}
+
+        private final ArrayDeque<Reading> readings = new ArrayDeque<>();
+        private final long windowMillis;
+        private final long maxGapMillis;
+
+        HumidityRiseDetector(long windowMillis, long maxGapMillis) {
+            this.windowMillis = windowMillis;
+            this.maxGapMillis = maxGapMillis;
+        }
+
+        boolean update(int humidity, double baselineHumidity, long now, HumidityPolicy policy) {
+            if (humidity < 0 || humidity > 100) {
+                reset();
+                return false;
+            }
+            if (!readings.isEmpty() && (now <= readings.getLast().time()
+                    || now - readings.getLast().time() > maxGapMillis)) {
+                reset();
+            }
+            while (!readings.isEmpty() && now - readings.getFirst().time() > windowMillis) {
+                readings.removeFirst();
+            }
+            int lowestHumidity = humidity;
+            for (Reading reading : readings) {
+                lowestHumidity = Math.min(lowestHumidity, reading.humidity());
+            }
+            readings.addLast(new Reading(humidity, now));
+            return hasHumidityRise(humidity, baselineHumidity, policy)
+                    && humidity - lowestHumidity >= policy.riseThreshold();
+        }
+
+        void reset() {
+            readings.clear();
+        }
     }
 
     static double humidityRecoveryTarget(double baselineHumidity) {
@@ -1571,28 +1630,24 @@ public class HumidityMonitor {
     }
 
     private void checkBoostLogic(int currentHumidity, HistoricalBaselines baselines, double tempExtract) {
-        if (!BOOST_ENABLED || monitorOnly || staticRpmMode) return;
-        if (lastHumidity == -1) return; // First run, can't calculate delta
+        if (!BOOST_ENABLED || monitorOnly || staticRpmMode) {
+            humidityRiseDetector.reset();
+            return;
+        }
 
         long now = System.currentTimeMillis();
-        
-        if (!boostActive) {
-            // Check if the time gap is too large (e.g., missed polls due to errors)
-            // If the gap is more than 2.5x the poll interval, we skip the check to avoid false positives
-            long timeGap = now - lastHumidityTime;
-            long maxGap = (long) (POLL_INTERVAL * 2.5 * 1000);
-            
-            if (timeGap > maxGap) {
-                log("Skipping boost check due to long gap between readings (" + (timeGap/1000) + "s). Re-establishing baseline.");
-                return;
-            }
+        double baselineHumidity = Double.isFinite(baselines.humidityAverage())
+            ? baselines.humidityAverage() : lastHumidity >= 0 ? lastHumidity : Double.NaN;
+        boolean rapidRise = humidityRiseDetector.update(currentHumidity, baselineHumidity, now,
+            HUMIDITY_POLICY);
 
-            double baselineHumidity = Double.isFinite(baselines.humidityAverage())
-                    ? baselines.humidityAverage() : lastHumidity;
-            if (hasHumidityRise(currentHumidity, baselineHumidity, HUMIDITY_POLICY)) {
+        if (!boostActive) {
+            if (rapidRise) {
                 log(String.format(Locale.ROOT,
-                        "Humidity rise detected (%d%% current, pre-rise baseline %.1f%%). Activating boost.",
-                        currentHumidity, baselineHumidity));
+                "Rapid humidity rise detected (%d%% current, pre-rise baseline %.1f%%,"
+                + " at least %d points within %d min). Activating boost.",
+                currentHumidity, baselineHumidity, HUMIDITY_RISE_THRESHOLD,
+                HUMIDITY_RISE_WINDOW_MS / 60_000));
                 activateBoost(currentHumidity, baselineHumidity, baselines.moistureAverage(), tempExtract);
             }
         } else {
@@ -1637,6 +1692,7 @@ public class HumidityMonitor {
 
     private void deactivateBoost() {
         boostActive = false;
+        humidityRiseDetector.reset();
         boostBaselineHumidity = Double.NaN;
         boostBaselineMoisture = Double.NaN;
         boostEndTime = 0;

@@ -5,6 +5,83 @@ import org.junit.jupiter.api.Test;
 
 class ShowerBoostTest {
     private static final double NO_MOISTURE = Double.NaN;
+    private static final HumidityMonitor.HumidityPolicy POLICY =
+            new HumidityMonitor.HumidityPolicy(4, 1, 3, 1, 30, 65, 80);
+
+    private static HumidityMonitor.HumidityRiseDetector detector() {
+        return new HumidityMonitor.HumidityRiseDetector(300_000L, 75_000L);
+    }
+
+    @Test
+    void slowWeatherRiseNeverTriggersEvenAboveTheLongTermBaseline() {
+        HumidityMonitor.HumidityRiseDetector detector = detector();
+        for (int poll = 0; poll <= 160; poll++) {
+            int humidity = 60 + poll / 20;
+            assertFalse(detector.update(humidity, 56.0, poll * 30_000L, POLICY),
+                    "Slow weather rise triggered at poll " + poll);
+        }
+    }
+
+    @Test
+    void fourPointRiseWithinFiveMinutesTriggersAtTheBoundary() {
+        HumidityMonitor.HumidityRiseDetector detector = detector();
+        for (int poll = 0; poll < 10; poll++) {
+            assertFalse(detector.update(60 + poll * 4 / 10, 60.0, poll * 30_000L, POLICY));
+        }
+        assertTrue(detector.update(64, 60.0, 300_000L, POLICY));
+    }
+
+    @Test
+    void suddenShowerTriggersWithoutWaitingForAFullWindow() {
+        HumidityMonitor.HumidityRiseDetector detector = detector();
+        assertFalse(detector.update(57, 57.0, 0L, POLICY));
+        assertTrue(detector.update(79, 57.0, 30_000L, POLICY));
+    }
+
+    @Test
+    void expiredLowReadingCannotTurnASlowRiseIntoAShower() {
+        HumidityMonitor.HumidityRiseDetector detector = detector();
+        assertFalse(detector.update(60, 56.0, 0L, POLICY));
+        for (int poll = 1; poll <= 10; poll++) {
+            assertFalse(detector.update(61, 56.0, poll * 30_000L, POLICY));
+        }
+        assertFalse(detector.update(64, 56.0, 330_000L, POLICY));
+    }
+
+    @Test
+    void aQuickReboundBelowTheLongTermBaselineDoesNotTrigger() {
+        HumidityMonitor.HumidityRiseDetector detector = detector();
+        assertFalse(detector.update(50, 60.0, 0L, POLICY));
+        assertFalse(detector.update(60, 60.0, 30_000L, POLICY));
+    }
+
+    @Test
+    void startupAndGapsRequireNewEvidenceOfARapidRise() {
+        HumidityMonitor.HumidityRiseDetector detector = detector();
+        assertFalse(detector.update(60, 50.0, 0L, POLICY));
+        assertFalse(detector.update(70, 50.0, 75_001L, POLICY));
+        assertTrue(detector.update(74, 50.0, 105_001L, POLICY));
+    }
+
+    @Test
+    void recoveryResetCannotReuseThePreviousShowersLowReading() {
+        HumidityMonitor.HumidityRiseDetector detector = detector();
+        assertFalse(detector.update(60, 60.0, 0L, POLICY));
+        assertTrue(detector.update(80, 60.0, 30_000L, POLICY));
+        detector.reset();
+        assertFalse(detector.update(64, 60.0, 60_000L, POLICY));
+        assertFalse(detector.update(65, 60.0, 90_000L, POLICY));
+        assertTrue(detector.update(69, 64.0, 120_000L, POLICY));
+    }
+
+    @Test
+    void invalidHumidityAndBackwardsTimeDiscardStaleEvidence() {
+        HumidityMonitor.HumidityRiseDetector detector = detector();
+        assertFalse(detector.update(60, 60.0, 30_000L, POLICY));
+        assertFalse(detector.update(-1, 60.0, 60_000L, POLICY));
+        assertFalse(detector.update(70, 60.0, 90_000L, POLICY));
+        assertFalse(detector.update(80, 60.0, 60_000L, POLICY));
+    }
 
     @Test
     void humidityAboveBaselineDoesNotEndShowerBoost() {

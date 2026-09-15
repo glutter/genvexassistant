@@ -9,7 +9,7 @@ A Java 17/Maven service for monitoring and controlling Genvex Optima 270/2010 ve
 ## Features
 
 - Polls humidity, temperatures, fan state, and bypass state every 30 seconds by default.
-- Detects showers at a configurable rise above the rolling humidity baseline.
+- Detects showers only when the configured rise (default 4 percentage points) occurs within 5 minutes and exceeds the rolling humidity baseline, filtering out slow weather-related drift.
 - Runs the configured boost speed until the air is as dry as it was before the shower, measured as absolute moisture so a house that cooled meanwhile still counts as recovered.
 - Guards against heat loss in cold weather: steps humidity-driven ventilation down one speed at a time and keeps each step only while the mixing ratio is measurably still falling, never below normal speed and never above 80 % humidity.
 - Applies steady-humidity, night, defrost, manual, static, and evening-cooling policies.

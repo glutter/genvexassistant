@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.77
+
+- Require the configured humidity rise (4 percentage points by default) within 5 minutes as well as above the rolling baseline before starting shower boost. Slow weather-related humidity drift no longer qualifies just because it accumulates above that baseline; ordinary high-humidity protection is unchanged.
+- Discard rapid-rise evidence after missing readings, paused boost detection or recovery, so stale readings cannot start or immediately retrigger a shower boost.
+- Preserve fan retry backoff when the unit briefly accepts a setpoint before reverting it. Reset the counter only after the setpoint remains stable for the maximum retry interval (30 minutes by default); interrupted polling and paused control do not count as stable feedback.
+- Add regression coverage for slow humidity drift, rapid showers, observation gaps, recovery rearming and transient setpoint acceptance.
+- Support `./publish.sh --build-only` to test and package locally without staging, committing or pushing changes.
+
 ## 1.76
 
 - Recognise a second, smaller shower. The heat-loss guard compared moisture against the highest reading it had ever seen, so once one shower had set that mark, a later shower staying below it was invisible: on a damp evening the fan could sit at normal speed through an entire second shower. A rise of roughly two humidity points above the level last measured now counts as a new event and hands the full speed straight back.
