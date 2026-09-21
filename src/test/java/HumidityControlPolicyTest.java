@@ -14,6 +14,147 @@ import org.junit.jupiter.api.Test;
 
 class HumidityControlPolicyTest {
         @Test
+        void stoppingOverridePreservesRecoveryAndProtectionStateAndSchedulesOnlyOnce() throws Exception {
+                HumidityMonitor monitor = new HumidityMonitor("unused", "unused");
+                java.util.List<Runnable> polls = new java.util.ArrayList<>();
+                recordScheduledPolls(monitor, polls);
+                setMonitorField(monitor, "manualOverrideActive", true);
+                setMonitorField(monitor, "manualOverrideEndTime", Long.MAX_VALUE);
+                setMonitorField(monitor, "manualOverrideSpeed", 4);
+                setMonitorField(monitor, "staticRpmMode", true);
+                setMonitorField(monitor, "boostActive", true);
+                setMonitorField(monitor, "boostBaselineHumidity", 48.0);
+                setMonitorField(monitor, "boostBaselineMoisture", 7.0);
+                setMonitorField(monitor, "commandedFanSpeed", 4);
+                setMonitorField(monitor, "lastFanCommandTime", 12345L);
+                Object heatLossState = getMonitorField(monitor, "heatLossState");
+                Object feedback = getMonitorField(monitor, "fanCommandFeedback");
+                assertEquals(new HumidityMonitor.StopOverrideResult(true, "auto"), monitor.stopManualOverride());
+                assertEquals(false, getMonitorField(monitor, "manualOverrideActive"));
+                assertEquals(0L, getMonitorField(monitor, "manualOverrideEndTime"));
+                assertEquals(-1, getMonitorField(monitor, "manualOverrideSpeed"));
+                assertEquals(false, getMonitorField(monitor, "staticRpmMode"));
+                assertEquals(true, getMonitorField(monitor, "boostActive"));
+                assertEquals(48.0, getMonitorField(monitor, "boostBaselineHumidity"));
+                assertEquals(7.0, getMonitorField(monitor, "boostBaselineMoisture"));
+                assertEquals(4, getMonitorField(monitor, "commandedFanSpeed"));
+                assertEquals(12345L, getMonitorField(monitor, "lastFanCommandTime"));
+                assertEquals(heatLossState, getMonitorField(monitor, "heatLossState"));
+                assertEquals(feedback, getMonitorField(monitor, "fanCommandFeedback"));
+                assertEquals(new HumidityMonitor.StopOverrideResult(false, "auto"), monitor.stopManualOverride());
+                assertEquals(1, polls.size());
+                setMonitorField(monitor, "staticRpmMode", true);
+                assertEquals(new HumidityMonitor.StopOverrideResult(false, "static"), monitor.stopManualOverride());
+                setMonitorField(monitor, "manualOverrideActive", true);
+                setMonitorField(monitor, "manualOverrideEndTime", 1L);
+                assertEquals(new HumidityMonitor.StopOverrideResult(false, "static"), monitor.stopManualOverride());
+                assertEquals(1, polls.size());
+                setMonitorField(monitor, "monitorOnly", true);
+                assertEquals(new HumidityMonitor.StopOverrideResult(false, "monitor"), monitor.stopManualOverride());
+                assertEquals(true, getMonitorField(monitor, "staticRpmMode"));
+                setMonitorField(monitor, "manualOverrideActive", true);
+                setMonitorField(monitor, "manualOverrideEndTime", Long.MAX_VALUE);
+                assertEquals(new HumidityMonitor.StopOverrideResult(true, "monitor"), monitor.stopManualOverride());
+                assertEquals(true, getMonitorField(monitor, "monitorOnly"));
+                assertEquals(2, polls.size());
+                setMonitorField(monitor, "manualOverrideActive", true);
+                ((java.util.concurrent.atomic.AtomicBoolean) getMonitorField(monitor, "restartInProgress")).set(true);
+                assertThrows(IllegalStateException.class, monitor::stopManualOverride);
+                assertEquals(true, getMonitorField(monitor, "manualOverrideActive"));
+                assertEquals(2, polls.size());
+        }
+
+        private static void recordScheduledPolls(HumidityMonitor monitor, java.util.List<Runnable> polls)
+                        throws Exception {
+                Object lock = getMonitorField(monitor, "clientLock");
+                Object scheduler = java.lang.reflect.Proxy.newProxyInstance(HumidityControlPolicyTest.class.getClassLoader(),
+                                new Class<?>[] {java.util.concurrent.ScheduledExecutorService.class},
+                                (proxy, method, arguments) -> {
+                                        assertEquals("execute", method.getName());
+                                        assertTrue(Thread.holdsLock(lock));
+                                        polls.add((Runnable) arguments[0]);
+                                        return null;
+                                });
+                setMonitorField(monitor, "scheduler", scheduler);
+        }
+
+        @Test
+        void stopEndpointRejectsWrongMethodsAndPathsAndReportsScheduledNotAcknowledged() throws Exception {
+                HumidityMonitor monitor = new HumidityMonitor("unused", "unused");
+                java.util.List<Runnable> polls = new java.util.ArrayList<>();
+                recordScheduledPolls(monitor, polls);
+                setMonitorField(monitor, "manualOverrideActive", true);
+                setMonitorField(monitor, "manualOverrideEndTime", Long.MAX_VALUE);
+                TestExchange wrongMethod = new TestExchange("GET", "/api/fan/udluftning/stop");
+                monitor.new StopUdluftningApiHandler().handle(wrongMethod);
+                assertEquals(405, wrongMethod.status);
+                TestExchange wrongPath = new TestExchange("POST", "/api/fan/udluftning/stop/extra");
+                monitor.new StopUdluftningApiHandler().handle(wrongPath);
+                assertEquals(404, wrongPath.status);
+                TestExchange startFallback = new TestExchange("POST", "/api/fan/udluftning/stop");
+                monitor.new UdluftningApiHandler().handle(startFallback);
+                assertEquals(404, startFallback.status);
+                assertEquals(true, getMonitorField(monitor, "manualOverrideActive"));
+                assertEquals(0, polls.size());
+                java.util.concurrent.atomic.AtomicBoolean restart =
+                                (java.util.concurrent.atomic.AtomicBoolean) getMonitorField(monitor, "restartInProgress");
+                restart.set(true);
+                TestExchange maintenance = new TestExchange("POST", "/api/fan/udluftning/stop");
+                monitor.new StopUdluftningApiHandler().handle(maintenance);
+                assertEquals(409, maintenance.status);
+                assertEquals(true, getMonitorField(monitor, "manualOverrideActive"));
+                restart.set(false);
+                TestExchange stopped = new TestExchange("POST", "/api/fan/udluftning/stop");
+                monitor.new StopUdluftningApiHandler().handle(stopped);
+                assertEquals(200, stopped.status);
+                assertEquals("{\"ok\":true,\"pending\":true,\"control_mode\":\"auto\"}", stopped.body.toString("UTF-8"));
+                TestExchange repeated = new TestExchange("POST", "/api/fan/udluftning/stop");
+                monitor.new StopUdluftningApiHandler().handle(repeated);
+                assertEquals("{\"ok\":true,\"pending\":false,\"control_mode\":\"auto\"}", repeated.body.toString("UTF-8"));
+                assertEquals(1, polls.size());
+                TestExchange summaryMethod = new TestExchange("POST", "/api/summary");
+                new HumidityMonitor.SummaryApiHandler().handle(summaryMethod);
+                assertEquals(405, summaryMethod.status);
+        }
+
+        private static final class TestExchange extends com.sun.net.httpserver.HttpExchange {
+                private final String method;
+                private final java.net.URI uri;
+                private final com.sun.net.httpserver.Headers headers = new com.sun.net.httpserver.Headers();
+                private final java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+                private int status;
+
+                TestExchange(String method, String path) {
+                        this.method = method;
+                        this.uri = java.net.URI.create(path);
+                }
+
+                @Override public com.sun.net.httpserver.Headers getRequestHeaders() { return headers; }
+                @Override public com.sun.net.httpserver.Headers getResponseHeaders() { return headers; }
+                @Override public java.net.URI getRequestURI() { return uri; }
+                @Override public String getRequestMethod() { return method; }
+                @Override public com.sun.net.httpserver.HttpContext getHttpContext() { return null; }
+                @Override public void close() {}
+                @Override public java.io.InputStream getRequestBody() { return java.io.InputStream.nullInputStream(); }
+                @Override public java.io.OutputStream getResponseBody() { return body; }
+                @Override public void sendResponseHeaders(int code, long length) { status = code; }
+                @Override public java.net.InetSocketAddress getRemoteAddress() { return null; }
+                @Override public int getResponseCode() { return status; }
+                @Override public java.net.InetSocketAddress getLocalAddress() { return null; }
+                @Override public String getProtocol() { return "HTTP/1.1"; }
+                @Override public Object getAttribute(String name) { return null; }
+                @Override public void setAttribute(String name, Object value) {}
+                @Override public void setStreams(java.io.InputStream input, java.io.OutputStream output) {}
+                @Override public com.sun.net.httpserver.HttpPrincipal getPrincipal() { return null; }
+        }
+
+        private static Object getMonitorField(HumidityMonitor monitor, String name) throws Exception {
+                java.lang.reflect.Field field = HumidityMonitor.class.getDeclaredField(name);
+                field.setAccessible(true);
+                return field.get(monitor);
+        }
+
+        @Test
         void liveTelemetryUsesSuccessfulDeviceTimeAndRejectsStaleOrFailedProgress() {
                 HumidityMonitor monitor = new HumidityMonitor("unused", "unused");
                 long now = Instant.parse("2026-09-21T12:00:00Z").toEpochMilli();

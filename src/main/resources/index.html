@@ -315,6 +315,21 @@
         .event-list summary i { color: var(--warning-color); }
         .event-list ol { margin: 0; padding: 0 0 0 20px; }
         .event-list li { padding: 4px 0; line-height: 1.5; overflow-wrap: anywhere; }
+        .event-button { width: 100%; text-align: left; min-height: 36px; padding: 4px 6px; color: var(--text-color); background: transparent; line-height: 1.5; overflow-wrap: anywhere; }
+        .event-button:hover { background: var(--surface-hover); }
+        .manual-override { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
+        #manual-countdown { min-width: 0; color: var(--secondary-text); font-size: 0.76rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+        .daily-summary { padding: 12px 0; margin-bottom: 10px; border-block: 1px solid var(--border-color); }
+        .summary-stages { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+        .summary-stage { min-width: 0; font-size: 0.74rem; }
+        .summary-stage strong { display: block; min-height: 1.4em; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; font-weight: 500; }
+        .summary-stage meter { display: block; width: 100%; height: 12px; accent-color: var(--accent-color); }
+        .summary-stage meter[hidden] { display: none; }
+        .summary-stage meter::-webkit-meter-optimum-value { background: var(--accent-color); }
+        .summary-stage meter::-moz-meter-bar { background: var(--accent-color); }
+        .summary-meta { display: flex; flex-wrap: wrap; gap: 6px 20px; margin-top: 9px; font-size: 0.75rem; }
+        #summary-period, #summary-status, #summary-coverage { color: var(--secondary-text); overflow-wrap: anywhere; }
+        #summary-period { margin-top: 5px; font-size: 0.7rem; }
         .event-list p { color: var(--secondary-text); }
         @media (max-width: 600px) {
             .chart-header { flex-direction: column; align-items: stretch; }
@@ -407,6 +422,22 @@
             <div><span class="field-label">Recovery baseline</span><span id="recovery-baseline">Unavailable</span></div>
         </div>
 
+        <section class="daily-summary" aria-labelledby="summary-title">
+            <div class="section-heading"><h2 id="summary-title">Last 24 hours</h2><span id="summary-status" role="status">Summary unavailable</span></div>
+            <div class="summary-stages">
+                <div class="summary-stage"><span class="field-label">Stage 0</span><strong id="summary-stage-0">Unavailable</strong><meter id="summary-bar-0" min="0" max="86400" value="0" aria-label="Stage 0 observed duration" hidden></meter></div>
+                <div class="summary-stage"><span class="field-label">Stage 1</span><strong id="summary-stage-1">Unavailable</strong><meter id="summary-bar-1" min="0" max="86400" value="0" aria-label="Stage 1 observed duration" hidden></meter></div>
+                <div class="summary-stage"><span class="field-label">Stage 2</span><strong id="summary-stage-2">Unavailable</strong><meter id="summary-bar-2" min="0" max="86400" value="0" aria-label="Stage 2 observed duration" hidden></meter></div>
+                <div class="summary-stage"><span class="field-label">Stage 3</span><strong id="summary-stage-3">Unavailable</strong><meter id="summary-bar-3" min="0" max="86400" value="0" aria-label="Stage 3 observed duration" hidden></meter></div>
+                <div class="summary-stage"><span class="field-label">Stage 4</span><strong id="summary-stage-4">Unavailable</strong><meter id="summary-bar-4" min="0" max="86400" value="0" aria-label="Stage 4 observed duration" hidden></meter></div>
+            </div>
+            <div class="summary-meta">
+                <span>Automatic increases (observed): <strong id="summary-upshifts">Unavailable</strong></span>
+                <span id="summary-coverage">Coverage unavailable · Unobserved time unavailable</span>
+            </div>
+            <div id="summary-period"></div>
+        </section>
+
         <section class="control-grid" aria-label="Ventilation controls">
             <div class="control-card">
                 <div class="control-heading">
@@ -418,7 +449,7 @@
                 </div>
                 <div class="field">
                     <label class="field-label" for="system-mode-select">Active mode</label>
-                    <select id="system-mode-select" onchange="applySystemControlMode()">
+                    <select id="system-mode-select" class="ventilation-control" onchange="applySystemControlMode()">
                         <option value="auto">Automatic</option>
                         <option value="static">Fixed fan speed</option>
                         <option value="monitor">Monitor only</option>
@@ -427,7 +458,7 @@
                 <div id="static-speed-control-group" class="static-speed-control">
                     <div class="field">
                         <label class="field-label" for="static-speed">Target speed</label>
-                        <select id="static-speed" onchange="applyStaticSpeedUpdate()">
+                        <select id="static-speed" class="ventilation-control" onchange="applyStaticSpeedUpdate()">
                             <option value="1">1 · Low</option>
                             <option value="2">2 · Normal</option>
                             <option value="3">3 · Boost</option>
@@ -449,19 +480,23 @@
                 <div class="control-group">
                     <div class="field">
                         <label class="field-label" for="udluftning-level">Fan speed</label>
-                        <select id="udluftning-level">
+                        <select id="udluftning-level" class="ventilation-control">
                             <option value="1">1 · Low</option>
                             <option value="2">2 · Normal</option>
                             <option value="3" selected>3 · Boost</option>
                             <option value="4">4 · Maximum</option>
                         </select>
                     </div>
-                    <button class="action-btn" onclick="triggerUdluftning()"><i class="fas fa-play"></i>&nbsp; Start 30 min</button>
+                    <button class="action-btn ventilation-control" onclick="triggerUdluftning()"><i class="fas fa-play"></i>&nbsp; Start 30 min</button>
                 </div>
                 <div class="quick-actions" aria-label="Quick boost durations">
-                    <button class="quick-btn" onclick="triggerQuickBoost(30)">30 min</button>
-                    <button class="quick-btn" onclick="triggerQuickBoost(60)">1 hour</button>
-                    <button class="quick-btn" onclick="triggerQuickBoost(120)">2 hours</button>
+                    <button class="quick-btn ventilation-control" onclick="triggerQuickBoost(30)">30 min</button>
+                    <button class="quick-btn ventilation-control" onclick="triggerQuickBoost(60)">1 hour</button>
+                    <button class="quick-btn ventilation-control" onclick="triggerQuickBoost(120)">2 hours</button>
+                </div>
+                <div class="manual-override">
+                    <span id="manual-countdown">Manual boost state unavailable</span>
+                    <button id="stop-boost" class="danger-btn ventilation-control" type="button" onclick="stopManualBoost()" title="Stop manual boost" aria-label="Stop manual boost" hidden><i class="fas fa-stop" aria-hidden="true"></i>&nbsp; Stop</button>
                 </div>
             </div>
         </section>
@@ -482,6 +517,7 @@
                 </div>
             </div>
             <div id="history-status" class="section-meta" role="status"></div>
+            <div id="gap-count" class="section-meta" role="status"></div>
             <div class="chart-tabs" role="tablist" aria-label="History view" onkeydown="navigateChartTabs(event)">
                 <button class="chart-tab" id="tab-climate" role="tab" aria-selected="true" aria-controls="history-view" onclick="setChartView('climate')">Humidity &amp; fan</button>
                 <button class="chart-tab" id="tab-temperatures" role="tab" aria-selected="false" aria-controls="history-view" tabindex="-1" onclick="setChartView('temperatures')">Temperatures</button>
@@ -511,7 +547,7 @@
                 <button class="icon-btn" type="button" onclick="resetZoom()" title="Reset zoom" aria-label="Reset zoom"><i class="fas fa-arrows-left-right-to-line" aria-hidden="true"></i></button>
             </form>
             <label class="window-slider" for="window-size">Window <input id="window-size" type="range" min="1" max="100" value="100" step="1" oninput="resizeWindow(this.value)" disabled><output id="window-percent" for="window-size">100%</output></label>
-            <output id="window-label" for="window-start window-end">Time window unavailable</output>
+            <output id="window-label" for="window-start window-end" tabindex="-1">Time window unavailable</output>
             <div id="window-error" role="status"></div>
             <details class="event-list" open>
                 <summary><i class="fas fa-caret-up" aria-hidden="true" title="Recorded control event"></i> Recent control events <span id="event-count"></span></summary>
@@ -536,6 +572,7 @@
         let currentRange = 'day';
         let liveSequence = 0;
         let historySequence = 0;
+        let summarySequence = 0;
         let historyController;
         let lastLiveData = null;
         let liveReachable = null;
@@ -543,6 +580,8 @@
         let historyRows = [];
         let historyBounds = null;
         let visibleWindow = null;
+        let manualSample = null;
+        let boostPending = false;
         const chartSeriesVisibility = {
             humidity: true,
             tempSupply: true,
@@ -555,6 +594,38 @@
             commandedSpeed: false,
             bypass: false
         };
+
+        const preferencesKey = 'genvex.chart.v1';
+
+        function saveChartPreferences() {
+            try {
+                localStorage.setItem(preferencesKey, JSON.stringify({ range: currentRange, view: chartView, series: chartSeriesVisibility }));
+            } catch {}
+        }
+
+        function restoreChartPreferences() {
+            try {
+                const saved = JSON.parse(localStorage.getItem(preferencesKey));
+                if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return;
+                if (['3h', '6h', '12h', 'day', 'week', 'month'].includes(saved.range)) currentRange = saved.range;
+                if (['climate', 'temperatures', 'custom'].includes(saved.view)) chartView = saved.view;
+                if (saved.series && typeof saved.series === 'object' && !Array.isArray(saved.series)) {
+                    Object.keys(chartSeriesVisibility).forEach(key => {
+                        if (Object.hasOwn(saved.series, key) && typeof saved.series[key] === 'boolean') {
+                            chartSeriesVisibility[key] = saved.series[key];
+                        }
+                    });
+                }
+            } catch {}
+        }
+
+        function syncRangeControls() {
+            document.querySelectorAll('.range-btn').forEach(button => {
+                const selected = button.id === 'btn-' + currentRange;
+                button.classList.toggle('active', selected);
+                button.setAttribute('aria-pressed', String(selected));
+            });
+        }
 
         function setRange(range) {
             if (!['3h', '6h', '12h', 'day', 'week', 'month'].includes(range)) return;
@@ -570,11 +641,8 @@
                 syncVisibleWindow();
             }
             currentRange = range;
-            document.querySelectorAll('.range-btn').forEach(button => {
-                const selected = button.id === 'btn-' + range;
-                button.classList.toggle('active', selected);
-                button.setAttribute('aria-pressed', String(selected));
-            });
+            syncRangeControls();
+            saveChartPreferences();
             return fetchHistory();
         }
 
@@ -595,6 +663,7 @@
         }
 
         function updateFreshness() {
+            updateManualOverride();
             const sampledAt = typeof lastLiveData?.sampled_at === 'string'
                 ? Date.parse(lastLiveData.sampled_at) : NaN;
             const hasSample = Number.isFinite(sampledAt);
@@ -652,12 +721,104 @@
         }
 
         async function fetchData() {
-            await Promise.all([fetchLive(), fetchHistory()]);
+            await Promise.all([fetchLive(), fetchHistory(), fetchSummary()]);
+        }
+
+        function formatDuration(seconds) {
+            const total = Math.round(seconds);
+            const hours = Math.floor(total / 3600);
+            const minutes = Math.floor(total % 3600 / 60);
+            return hours > 0 ? hours + 'h ' + minutes + 'm'
+                : minutes > 0 ? minutes + 'm ' + total % 60 + 's' : total + 's';
+        }
+
+        function renderSummary(data) {
+            const observed = data && data.coverage_seconds > 0;
+            document.getElementById('summary-status').textContent = !data ? 'Summary unavailable'
+                : observed ? '' : 'No observed telemetry';
+            for (let stage = 0; stage <= 4; stage++) {
+                const duration = observed ? formatDuration(data.stage_seconds[stage]) : 'Unavailable';
+                document.getElementById('summary-stage-' + stage).textContent = duration;
+                const bar = document.getElementById('summary-bar-' + stage);
+                bar.hidden = !observed;
+                bar.max = data ? (Date.parse(data.end) - Date.parse(data.start)) / 1000 : 86400;
+                bar.value = observed ? data.stage_seconds[stage] : 0;
+                bar.setAttribute('aria-valuetext', duration);
+                bar.title = 'Stage ' + stage + ': ' + duration;
+            }
+            document.getElementById('summary-upshifts').textContent = observed ? String(data.automatic_upshifts) : 'Unavailable';
+            document.getElementById('summary-coverage').textContent = data
+                ? 'Coverage ' + formatDuration(data.coverage_seconds) + ' · Unobserved ' + formatDuration(data.unknown_seconds)
+                : 'Coverage unavailable · Unobserved time unavailable';
+            document.getElementById('summary-period').textContent = data
+                ? new Date(data.start).toLocaleString() + ' – ' + new Date(data.end).toLocaleString() : '';
+        }
+
+        async function fetchSummary() {
+            const sequence = ++summarySequence;
+            try {
+                const response = await fetch('api/summary');
+                if (!response.ok) throw new Error('Summary unavailable');
+                const data = await response.json();
+                if (sequence !== summarySequence) return;
+                const seconds = value => Number.isFinite(value) && value >= 0;
+                if (!data || !Array.isArray(data.stage_seconds) || data.stage_seconds.length !== 5
+                    || !data.stage_seconds.every(seconds) || !seconds(data.unknown_seconds) || !seconds(data.coverage_seconds)
+                    || !Number.isInteger(data.automatic_upshifts) || data.automatic_upshifts < 0
+                    || typeof data.start !== 'string' || typeof data.end !== 'string'
+                    || !Number.isFinite(Date.parse(data.start)) || !Number.isFinite(Date.parse(data.end))
+                    || Date.parse(data.end) <= Date.parse(data.start)) throw new Error('Summary unavailable');
+                renderSummary(data);
+            } catch {
+                if (sequence === summarySequence) renderSummary(null);
+            }
         }
 
         let isUpdatingMode = false;
 
+        function updateManualOverride() {
+            const countdown = document.getElementById('manual-countdown');
+            document.getElementById('stop-boost').hidden = manualSample?.active !== true;
+            if (!manualSample || typeof manualSample.active !== 'boolean') {
+                countdown.textContent = 'Manual boost state unavailable';
+            } else if (!manualSample.active) {
+                countdown.textContent = 'No manual boost';
+            } else if (!Number.isFinite(manualSample.seconds)) {
+                countdown.textContent = 'Manual boost · Remaining time unavailable';
+            } else {
+                const remaining = Math.max(0, Math.ceil(manualSample.seconds - Math.max(0, Date.now() - manualSample.receivedAt) / 1000));
+                countdown.textContent = remaining > 0
+                    ? 'Manual boost · ' + Math.floor(remaining / 60) + ':' + String(remaining % 60).padStart(2, '0') + ' remaining'
+                    : 'Timer elapsed · Awaiting live confirmation';
+            }
+        }
+
+        function setBoostPending(pending) {
+            boostPending = pending;
+            document.querySelectorAll('.ventilation-control').forEach(control => { control.disabled = pending; });
+        }
+
+        async function stopManualBoost() {
+            if (boostPending || isUpdatingMode || manualSample?.active !== true) return;
+            setBoostPending(true);
+            try {
+                const response = await fetch('api/fan/udluftning/stop', { method: 'POST' });
+                if (!response.ok) throw new Error(response.status === 409 ? 'System restarting · Try again shortly' : 'Failed to stop manual boost');
+                const result = await response.json();
+                if (result.ok !== true || typeof result.pending !== 'boolean'
+                    || !['auto', 'static', 'monitor'].includes(result.control_mode)) throw new Error('Stop confirmation unavailable');
+                showToast(result.pending ? 'Stop accepted · Reevaluation pending' : 'Manual override stopped · Fan stage follows live telemetry');
+            } catch (error) {
+                showToast(error.message, 'error');
+            } finally {
+                await fetchLive();
+                setBoostPending(false);
+            }
+        }
+
         function updateLiveDisplay(data) {
+            manualSample = { active: data.manual_override_active, seconds: data.manual_override_secs_left, receivedAt: Date.now() };
+            updateManualOverride();
             if (data.sampled_at === null) {
                 data = { ...data, humidity: null, temp_supply: null, temp_extract: null,
                     temp_outside: null, temp_exhaust: null, rpm: null, fan_speed: null, bypass_open: null };
@@ -679,9 +840,6 @@
                 && Number.isFinite(data.humidity_delta) && Number.isFinite(data.policy_speed)) {
                 details.unshift(data.policy_speed <= 2 ? 'Gentle drying'
                     : /shower/i.test(data.control_reason || '') ? 'Strong shower boost' : 'Strong humidity boost');
-            }
-            if (data.manual_override_active && Number.isFinite(data.manual_override_secs_left)) {
-                details.push(Math.ceil(data.manual_override_secs_left / 60) + ' min override remaining');
             }
             document.getElementById('operating-detail').textContent = details.join(' · ');
             document.getElementById('live-moisture').textContent = measurement(data.moisture, ' g/kg', 2);
@@ -751,9 +909,10 @@
         }
 
         function toggleSeries(seriesKey) {
-            if (!(seriesKey in chartSeriesVisibility)) return;
+            if (!Object.hasOwn(chartSeriesVisibility, seriesKey)) return;
             const visible = !chartSeriesVisibility[seriesKey];
             chartSeriesVisibility[seriesKey] = visible;
+            saveChartPreferences();
             syncSeriesControls();
             if (chart) {
                 syncChartAxes();
@@ -783,6 +942,7 @@
         function setChartView(view) {
             if (!['climate', 'temperatures', 'custom'].includes(view)) return;
             chartView = view;
+            saveChartPreferences();
             document.querySelectorAll('.chart-tab').forEach(button => {
                 const selected = button.id === 'tab-' + view;
                 button.setAttribute('aria-selected', String(selected));
@@ -890,15 +1050,32 @@
             return recordedReason(row.control_reason) + ` · Commanded ${measurement(row.commanded_speed)} · Actual ${measurement(row.fan_speed)} · Target ${measurement(row.target_speed)} · Policy request ${measurement(row.policy_speed)}`;
         }
 
+        function zoomToEvent(timestamp) {
+            if (!historyBounds || !historyRows.some(row => !row.gapSentinel && row.control_event === true && row.timestamp === timestamp)) return;
+            const start = Math.max(historyBounds.start, timestamp - 15 * 60000);
+            const end = Math.min(historyBounds.end, timestamp + 15 * 60000);
+            if (start >= end) return;
+            visibleWindow = { start, end };
+            document.getElementById('window-error').textContent = '';
+            syncVisibleWindow();
+            document.getElementById('window-label').focus();
+        }
+
         function renderEvents() {
             const bounds = visibleWindow || historyBounds;
-            const events = historyRows.filter(row => row.control_event === true && bounds
+            const events = historyRows.filter(row => !row.gapSentinel && row.control_event === true && bounds
                 && row.timestamp >= bounds.start && row.timestamp <= bounds.end);
             const list = document.getElementById('recent-events');
             list.replaceChildren();
             events.slice(-5).reverse().forEach(row => {
                 const item = document.createElement('li');
-                item.textContent = new Date(row.timestamp).toLocaleString() + ' · ' + eventDescription(row);
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'event-button';
+                button.title = 'Zoom to recorded control event';
+                button.textContent = new Date(row.timestamp).toLocaleString() + ' · ' + eventDescription(row);
+                button.onclick = () => zoomToEvent(row.timestamp);
+                item.appendChild(button);
                 list.appendChild(item);
             });
             document.getElementById('event-count').textContent = events.length ? '(latest ' + Math.min(5, events.length) + ' of ' + events.length + ')' : '';
@@ -908,22 +1085,37 @@
         function updateChart(data) {
             data = data.map(row => ({ ...row, timestamp: typeof row.timestamp === 'number' ? row.timestamp : Date.parse(row.timestamp) }))
                 .filter(row => Number.isFinite(row.timestamp)).sort((first, second) => first.timestamp - second.timestamp);
+            const threshold = lastLiveData?.stale_after_seconds ?? 75;
+            data = data.flatMap((row, index, rows) => {
+                const previous = rows[index - 1];
+                const gap = row.gap_before === true || (!Object.hasOwn(row, 'gap_before')
+                    && !['week', 'month'].includes(currentRange) && previous
+                    && row.timestamp - previous.timestamp > threshold * 1000);
+                return gap && previous
+                    ? [{ timestamp: (previous.timestamp + row.timestamp) / 2, gapSentinel: true }, row] : [row];
+            });
             historyRows = data;
+            const gaps = data.filter(row => row.gapSentinel).length;
+            document.getElementById('gap-count').textContent = gaps ? 'Telemetry gaps in loaded range: ' + gaps : '';
             historyBounds = data.length ? { start: data[0].timestamp, end: data[data.length - 1].timestamp } : null;
             const ctx = document.getElementById('mainChart').getContext('2d');
             
             const timestamps = data.map(d => d.timestamp);
-            const humidity = data.map(d => d.humidity);
-            const rpm = data.map(d => d.rpm);
-            const fanSpeed = data.map(d => d.fan_speed);
-            const targetSpeed = data.map(d => d.target_speed ?? null);
-            const commandedSpeed = data.map(d => d.commanded_speed ?? null);
-            const bypass = data.map(d => d.bypass_open == null
-                ? null : (d.bypass_open === true || d.bypass_open === 1 ? 1 : 0));
-            const tempSupply = data.map(d => d.temp_supply ?? d.temp);
-            const tempExtract = data.map(d => d.temp_extract);
-            const tempOutside = data.map(d => d.temp_outside);
-            const tempExhaust = data.map(d => d.temp_exhaust);
+            const values = key => data.map(row => Number.isFinite(row[key]) ? row[key] : null);
+            const humidity = values('humidity');
+            const rpm = values('rpm');
+            const fanSpeed = values('fan_speed');
+            const targetSpeed = values('target_speed');
+            const commandedSpeed = values('commanded_speed');
+            const bypass = data.map(row => row.bypass_open === true || row.bypass_open === 1 ? 1
+                : row.bypass_open === false || row.bypass_open === 0 ? 0 : null);
+            const tempSupply = data.map(row => {
+                const value = Object.hasOwn(row, 'temp_supply') ? row.temp_supply : row.temp;
+                return Number.isFinite(value) ? value : null;
+            });
+            const tempExtract = values('temp_extract');
+            const tempOutside = values('temp_outside');
+            const tempExhaust = values('temp_exhaust');
 
             const configuration = {
                 type: 'line',
@@ -1050,7 +1242,7 @@
                         {
                             seriesKey: 'controlEvents',
                             label: 'Recorded control event',
-                            data: data.map(row => row.control_event === true ? 0.96 : null),
+                            data: data.map(row => !row.gapSentinel && row.control_event === true ? 0.96 : null),
                             yAxisID: 'events',
                             showLine: false,
                             pointStyle: 'triangle',
@@ -1063,6 +1255,13 @@
                 },
                 options: {
                     animation: false,
+                    spanGaps: false,
+                    onClick: (event, elements, activeChart) => {
+                        const marker = activeChart.getElementsAtEventForMode(event, 'nearest', { intersect: true }, false)
+                            .find(hit => activeChart.data.datasets[hit.datasetIndex].seriesKey === 'controlEvents');
+                        const row = marker && historyRows[marker.index];
+                        if (row && !row.gapSentinel && row.control_event === true) zoomToEvent(row.timestamp);
+                    },
                     responsive: true,
                     maintainAspectRatio: false,
                     interaction: {
@@ -1186,6 +1385,7 @@
                     }
                 }
             };
+            configuration.data.datasets.forEach(dataset => { dataset.spanGaps = false; });
             if (chart) chart.data = configuration.data;
             else chart = new Chart(ctx, configuration);
             syncChartAxes();
@@ -1193,25 +1393,28 @@
         }
 
         // Initial load
-        syncSeriesControls();
+        restoreChartPreferences();
+        syncRangeControls();
+        setChartView(chartView);
         fetchData();
         // Auto refresh every 30s
         setInterval(fetchData, 30000);
         setInterval(updateFreshness, 1000);
 
         async function triggerQuickBoost(minutes) {
+               if (boostPending || isUpdatingMode) return;
              // Default to Speed 3 for quick boost
              document.getElementById('udluftning-level').value = "3"; 
              await triggerUdluftning(minutes);
         }
 
         async function triggerUdluftning(minutesOverride = null) {
+            if (boostPending || isUpdatingMode) return;
             const level = parseInt(document.getElementById('udluftning-level').value);
             let minutes = minutesOverride;
             if (!minutes) minutes = 30;
 
-            const btns = document.querySelectorAll('button');
-            btns.forEach(b => b.disabled = true); // Disable all buttons to prevent spam
+            setBoostPending(true);
 
             try {
                 const res = await fetch('api/fan/udluftning', {
@@ -1229,12 +1432,12 @@
             } catch (e) {
                 showToast('Error: ' + e.message, 'error');
             } finally {
-                btns.forEach(b => b.disabled = false);
+                setBoostPending(false);
             }
         }
 
         async function applySystemControlMode() {
-            if (isUpdatingMode) return;
+            if (isUpdatingMode || boostPending) return;
             isUpdatingMode = true;
             
             const mode = document.getElementById('system-mode-select').value;
@@ -1289,6 +1492,7 @@
         }
 
         async function applyStaticSpeedUpdate() {
+            if (boostPending) return;
             const speed = parseInt(document.getElementById('static-speed').value);
             try {
                 // Ensure monitor_only is false

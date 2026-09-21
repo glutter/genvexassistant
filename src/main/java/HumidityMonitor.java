@@ -408,8 +408,10 @@ public class HumidityMonitor {
             HttpServer server = HttpServer.create(new InetSocketAddress(WEB_PORT), 0);
             server.createContext("/", new StaticFileHandler());
             server.createContext("/api/history", new HistoryApiHandler());
+            server.createContext("/api/summary", new SummaryApiHandler());
             server.createContext("/api/live", new LiveApiHandler());
             server.createContext("/api/fan/udluftning", new UdluftningApiHandler());
+            server.createContext("/api/fan/udluftning/stop", new StopUdluftningApiHandler());
             server.createContext("/api/fan/static", new StaticRpmApiHandler());
             server.createContext("/api/system/restart", new RestartApiHandler());
             server.createContext("/api/system/mode", new SystemModeHandler());
@@ -683,12 +685,13 @@ public class HumidityMonitor {
                         "\"rpm\":%d, \"fan_speed\":%s, \"bypass_open\":%s, " +
                         "\"commanded_speed\":%s, \"supply_duty\":%s, " +
                         "\"control_reason\":%s, \"policy_speed\":%s, \"target_speed\":%s, " +
-                        "\"recovery_baseline\":%s, \"moisture\":%s, \"control_event\":%b}",
+                        "\"recovery_baseline\":%s, \"moisture\":%s, \"control_event\":%b, \"gap_before\":%b}",
                         ts, humidity, tempSupply, tempSupply, tempOutside, tempExhaust, tempExtract, rpm,
                         fanSpeed, bypassOpen, commandedSpeed, supplyDuty,
                         jsonString(rs.getString("control_reason")), nullableJsonInteger(rs, "policy_speed"),
                         nullableJsonInteger(rs, "target_speed"), nullableJsonNumber(rs, "recovery_baseline"),
-                        nullableJsonNumber(rs, "moisture", 3), rs.getBoolean("control_event")
+                        nullableJsonNumber(rs, "moisture", 3), rs.getBoolean("control_event"),
+                        rs.getBoolean("gap_before")
                     ));
                 }
                 }
@@ -733,11 +736,16 @@ public class HumidityMonitor {
                     + "(SELECT rowid FROM humidity_readings WHERE timestamp < datetime('now', ?1) "
                     + "ORDER BY timestamp DESC, rowid DESC LIMIT 1)), raw AS (SELECT *, "
                     + "LAG(sample_id) OVER samples AS previous_id, "
+                    + "LAG(timestamp) OVER samples AS previous_timestamp, "
+                    + "LEAD(timestamp) OVER samples AS next_timestamp, "
                     + "LAG(target_speed) OVER samples AS previous_target, "
                     + "LAG(commanded_speed) OVER samples AS previous_commanded, "
                     + "LAG(control_reason) OVER samples AS previous_reason "
                     + "FROM selected WINDOW samples AS (ORDER BY timestamp, sample_id)), "
-                    + "events AS (SELECT *, (previous_id IS NOT NULL AND "
+                    + "events AS (SELECT *, COALESCE(unixepoch(timestamp) - unixepoch(previous_timestamp) > "
+                    + staleAfterSeconds(POLL_INTERVAL) + ", 0) AS gap_before, "
+                    + "COALESCE(unixepoch(next_timestamp) - unixepoch(timestamp) > "
+                    + staleAfterSeconds(POLL_INTERVAL) + ", 0) AS gap_after, (previous_id IS NOT NULL AND "
                     + "(target_speed IS NOT previous_target OR commanded_speed IS NOT previous_commanded "
                     + "OR control_reason IS NOT previous_reason)) AS control_event "
                     + "FROM raw WHERE timestamp >= datetime('now', ?1)) ";
@@ -748,7 +756,7 @@ public class HumidityMonitor {
             return raw + ", bucketed AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY "
                     + "CAST(strftime('%s', timestamp) AS INTEGER) / " + bucketSeconds
                     + " ORDER BY timestamp DESC, sample_id DESC) AS bucket_rank FROM events) "
-                    + selection + "FROM bucketed WHERE bucket_rank = 1 OR control_event "
+                    + selection + "FROM bucketed WHERE bucket_rank = 1 OR control_event OR gap_before OR gap_after "
                     + "ORDER BY timestamp, sample_id";
         }
 
@@ -770,6 +778,110 @@ public class HumidityMonitor {
         private static String nullableJsonBypassState(ResultSet rs, String columnName) throws SQLException {
             int value = rs.getInt(columnName);
             return rs.wasNull() ? "null" : jsonBypassState(normalizeBypassState(value));
+        }
+    }
+
+    record DailySummary(Instant start, Instant end, long[] stageSeconds, long unknownSeconds,
+            int automaticUpshifts, long coverageSeconds) {
+        String json() {
+            return "{\"start\":" + jsonString(start.toString()) + ",\"end\":" + jsonString(end.toString())
+                    + ",\"stage_seconds\":" + java.util.Arrays.toString(stageSeconds)
+                    + ",\"unknown_seconds\":" + unknownSeconds + ",\"automatic_upshifts\":" + automaticUpshifts
+                    + ",\"coverage_seconds\":" + coverageSeconds + "}";
+        }
+    }
+
+    static DailySummary dailySummary(Connection connection, Instant now) throws SQLException {
+        Instant end = Instant.ofEpochSecond(now.getEpochSecond());
+        Instant start = end.minusSeconds(86_400);
+        String columns = "rowid AS sample_id, timestamp, fan_speed_level, target_speed, control_reason";
+        String sql = "WITH selected AS (SELECT " + columns + " FROM humidity_readings "
+                + "WHERE timestamp >= ?1 AND timestamp <= ?2 UNION ALL SELECT " + columns
+                + " FROM humidity_readings WHERE rowid = (SELECT rowid FROM humidity_readings "
+                + "WHERE timestamp < ?1 ORDER BY timestamp DESC, rowid DESC LIMIT 1)) "
+                + "SELECT *, unixepoch(timestamp) AS sample_time FROM selected ORDER BY timestamp, sample_id";
+        long[] stages = new long[5];
+        int upshifts = 0;
+        long previousTime = Long.MIN_VALUE;
+        int previousStage = -1;
+        int previousTarget = -1;
+        boolean previousAutomatic = false;
+        DateTimeFormatter sqliteTimestamp = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+                .withZone(ZoneOffset.UTC);
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, sqliteTimestamp.format(start));
+            statement.setString(2, sqliteTimestamp.format(end));
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    long sampleTime = rows.getLong("sample_time");
+                    if (rows.wasNull()) {
+                        previousTime = Long.MIN_VALUE;
+                        continue;
+                    }
+                    int stage = validSummaryStage(rows, "fan_speed_level");
+                    int target = validSummaryStage(rows, "target_speed");
+                    boolean automatic = isAutomaticSummaryReason(rows.getString("control_reason"));
+                    boolean contiguous = previousTime != Long.MIN_VALUE && sampleTime > previousTime
+                            && sampleTime - previousTime <= staleAfterSeconds(POLL_INTERVAL);
+                    if (contiguous && previousStage >= 0 && stage >= 0) {
+                        long seconds = sampleTime - Math.max(previousTime, start.getEpochSecond());
+                        stages[previousStage] += Math.max(0, seconds);
+                        if (sampleTime >= start.getEpochSecond() && previousAutomatic && automatic
+                                && previousTarget >= 0 && target > previousTarget) {
+                            upshifts++;
+                        }
+                    }
+                    previousTime = sampleTime;
+                    previousStage = stage;
+                    previousTarget = target;
+                    previousAutomatic = automatic;
+                }
+            }
+        }
+        long coverage = java.util.Arrays.stream(stages).sum();
+        return new DailySummary(start, end, stages, 86_400 - coverage, upshifts, coverage);
+    }
+
+    private static int validSummaryStage(ResultSet rows, String column) throws SQLException {
+        Object value = rows.getObject(column);
+        if (!(value instanceof Number number)) return -1;
+        double stage = number.doubleValue();
+        return stage >= 0 && stage <= 4 && stage == Math.rint(stage) ? (int) stage : -1;
+    }
+
+    private static boolean isAutomaticSummaryReason(String reason) {
+        if (reason == null) return false;
+        String[] parts = reason.split(" \\+ ", -1);
+        if (!java.util.Set.of("Normal", "Low humidity", "High humidity", "Very high humidity",
+                "Night mode", "Evening cooling", "Shower boost", "Gentle humidity recovery").contains(parts[0])) {
+            return false;
+        }
+        for (int index = 1; index < parts.length; index++) {
+            if (!java.util.Set.of("Evening cooling", "Heat-loss guard", "Night mode", "Fan command failed",
+                    "Suspected defrost", "Defrost status unknown").contains(parts[index])) return false;
+        }
+        return true;
+    }
+
+    static class SummaryApiHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if (!"/api/summary".equals(exchange.getRequestURI().getPath())) {
+                sendError(exchange, 404, "Not Found");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendError(exchange, 405, "Method Not Allowed");
+                return;
+            }
+            DailySummary summary;
+            try (Connection connection = DriverManager.getConnection(DB_URL)) {
+                summary = dailySummary(connection, Instant.now());
+            } catch (SQLException exception) {
+                sendError(exchange, 503, "Summary unavailable");
+                return;
+            }
+            sendJson(exchange, summary.json());
         }
     }
 
@@ -2012,9 +2124,66 @@ public class HumidityMonitor {
         }
     }
 
+    record StopOverrideResult(boolean pending, String controlMode) {}
+
+    StopOverrideResult stopManualOverride() {
+        synchronized (clientLock) {
+            if (restartInProgress.get()) {
+                throw new IllegalStateException("Fan control is unavailable during a restart");
+            }
+            boolean pending = false;
+            boolean active = manualOverrideActive && System.currentTimeMillis() < manualOverrideEndTime;
+            if (manualOverrideActive) {
+                manualOverrideActive = false;
+                manualOverrideSpeed = -1;
+                manualOverrideEndTime = 0;
+            }
+            if (active) {
+                staticRpmMode = false;
+                try {
+                    scheduler.execute(() -> {
+                        persistControlState(controlStateSnapshot());
+                        pollAndStore();
+                    });
+                    pending = true;
+                } catch (java.util.concurrent.RejectedExecutionException exception) {
+                    logError("Automatic reevaluation could not be scheduled: " + exception.getMessage());
+                }
+            }
+            return new StopOverrideResult(pending, monitorOnly ? "monitor" : staticRpmMode ? "static" : "auto");
+        }
+    }
+
+    class StopUdluftningApiHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if (!"/api/fan/udluftning/stop".equals(exchange.getRequestURI().getPath())) {
+                sendError(exchange, 404, "Not Found");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendError(exchange, 405, "Method Not Allowed");
+                return;
+            }
+            StopOverrideResult result;
+            try {
+                result = stopManualOverride();
+            } catch (IllegalStateException exception) {
+                sendError(exchange, 409, exception.getMessage());
+                return;
+            }
+            sendJson(exchange, "{\"ok\":true,\"pending\":" + result.pending()
+                    + ",\"control_mode\":" + jsonString(result.controlMode()) + "}");
+        }
+    }
+
     class UdluftningApiHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange t) throws IOException {
+            if (!"/api/fan/udluftning".equals(t.getRequestURI().getPath())) {
+                sendError(t, 404, "Not Found");
+                return;
+            }
             if (!t.getRequestMethod().equalsIgnoreCase("POST")) {
                 sendError(t, 405, "Method Not Allowed");
                 return;

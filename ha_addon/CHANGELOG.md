@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.81
+
+- Add a countdown and stop button for temporary manual boost. Stopping requests a fresh automatic evaluation without forcing a fan speed or resetting humidity recovery and protection state; monitor-only mode remains respected. An accepted stop does not imply a confirmed physical speed change.
+- Break chart lines across missing measurements. Preserve both sides of each real gap when downsampling week/month history, without treating normal downsampling as an outage.
+- Zoom around recorded control events by clicking a triangle marker or recent-event entry. Retain the selected view and keep zoom controls keyboard accessible.
+- Remember history range, view and series selections in the browser. Do not persist control commands or absolute zoom windows; unavailable browser storage does not interrupt the dashboard.
+- Add a rolling 24-hour overview of observed time at stages 0-4 and automatic target increases. Missing intervals and the unobserved tail remain explicitly unknown; statistics are independent of the selected graph range and exclude manual changes from automatic increase counts.
+- Extend backend and dashboard regression coverage for stopping boost, gap boundaries, summary accounting, preferences, event navigation and independent request failures. Fan-control thresholds are unchanged.
+
 ## 1.80
 
 - Explain the current control decision on the dashboard, distinguishing gentle recovery, strong boost, cooling, manual control and heat-loss limiting. Show the observed fan stage separately from the policy request, limited target and last commanded stage.

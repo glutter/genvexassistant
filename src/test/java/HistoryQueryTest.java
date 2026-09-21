@@ -14,6 +14,124 @@ import org.junit.jupiter.api.Test;
 
 class HistoryQueryTest {
     @Test
+    void dailySummaryClipsStartAndLeavesGapsInvalidStagesAndTailUnknown() throws Exception {
+        Instant now = Instant.parse("2026-09-21T12:00:00Z");
+        Instant start = now.minusSeconds(86_400);
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite::memory:");
+             Statement stmt = conn.createStatement()) {
+            stmt.execute("CREATE TABLE humidity_readings (timestamp DATETIME, humidity INTEGER)");
+            HumidityMonitor.ensureHistoryColumns(conn);
+            HumidityMonitor.DailySummary empty = HumidityMonitor.dailySummary(conn, now);
+            assertEquals(86_400, empty.unknownSeconds());
+            assertEquals(0, empty.coverageSeconds());
+            assertEquals(0, empty.automaticUpshifts());
+            insertSummarySample(conn, start.minusSeconds(30), 1, 1, "Normal");
+            insertSummarySample(conn, start.plusSeconds(30), 2, 2, "High humidity");
+            insertSummarySample(conn, start.plusSeconds(60), 3, 3, "Shower boost");
+            insertSummarySample(conn, start.plusSeconds(180), 4, 4, "Very high humidity");
+            insertSummarySample(conn, start.plusSeconds(210), null, 4, "Very high humidity");
+            insertSummarySample(conn, start.plusSeconds(240), 0, null, null);
+            insertSummarySample(conn, start.plusSeconds(270), 4, null, null);
+            insertSummarySample(conn, start.plusSeconds(300), 3, null, null);
+            insertSummarySample(conn, start.plusSeconds(330), 2, null, null);
+            insertSummarySample(conn, start.plusSeconds(360), 9, 4, "Normal");
+            insertSummarySample(conn, start.plusSeconds(390), 1.5, 4, "Normal");
+            insertSummarySample(conn, start.plusSeconds(420), "invalid", 4, "Normal");
+            insertSummarySample(conn, now.plusSeconds(30), 1, 1, "Normal");
+            HumidityMonitor.DailySummary summary = HumidityMonitor.dailySummary(conn, now);
+            org.junit.jupiter.api.Assertions.assertArrayEquals(new long[] {30, 30, 30, 30, 30}, summary.stageSeconds());
+            assertEquals(start, summary.start());
+            assertEquals(now, summary.end());
+            assertEquals(150, summary.coverageSeconds());
+            assertEquals(86_250, summary.unknownSeconds());
+            assertEquals(2, summary.automaticUpshifts());
+            assertEquals(86_400, java.util.Arrays.stream(summary.stageSeconds()).sum() + summary.unknownSeconds());
+            assertTrue(summary.json().contains("\"stage_seconds\":[30, 30, 30, 30, 30]"));
+        }
+    }
+
+    @Test
+    void summaryCountsOnlyContiguousAutomaticTargetIncreasesRegardlessOfGraphRange() throws Exception {
+        Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        Instant first = now.minusSeconds(600);
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite::memory:");
+             Statement stmt = conn.createStatement()) {
+            stmt.execute("CREATE TABLE humidity_readings (timestamp DATETIME, humidity INTEGER)");
+            HumidityMonitor.ensureHistoryColumns(conn);
+            String[] reasons = {"Normal", "High humidity", "High humidity + Fan command failed",
+                    "Manual override", "Shower boost", "Normal", "Static speed", "Very high humidity",
+                    "Monitor only", "Normal", "Maintenance restart", "Normal", null, "High humidity",
+                    "Unknown legacy", "Normal", "Normal + unknown limiter", "Normal",
+                    "Gentle humidity recovery + Heat-loss guard", "Shower boost + Night mode"};
+            int[] targets = {1, 2, 2, 4, 3, 1, 2, 3, -1, 1, -1, 1, -1, 2, 1, 3, 1, 1, 2, 3};
+            for (int sample = 0; sample < reasons.length; sample++) {
+                insertSummarySample(conn, first.plusSeconds(sample * 30L), sample % 5,
+                        targets[sample], reasons[sample]);
+            }
+            HumidityMonitor.DailySummary expected = HumidityMonitor.dailySummary(conn, now);
+            assertEquals(3, expected.automaticUpshifts());
+            assertEquals(570, expected.coverageSeconds());
+            for (String range : new String[] {"3h", "day", "week", "month"}) {
+                String filter = HumidityMonitor.HistoryApiHandler.historyTimeFilter(range);
+                try (PreparedStatement query = conn.prepareStatement(HumidityMonitor.HistoryApiHandler.historyQuery(
+                        filter, HumidityMonitor.HistoryApiHandler.historyBucketSeconds(range)))) {
+                    query.setString(1, filter);
+                    try (ResultSet rows = query.executeQuery()) {
+                        assertTrue(rows.next());
+                    }
+                }
+                assertEquals(expected.json(), HumidityMonitor.dailySummary(conn, now).json());
+            }
+        }
+    }
+
+    private static void insertSummarySample(Connection conn, Instant timestamp, Object stage,
+            Integer target, String reason) throws Exception {
+        try (PreparedStatement insert = conn.prepareStatement("INSERT INTO humidity_readings "
+                + "(timestamp, fan_speed_level, target_speed, control_reason) VALUES (datetime(?), ?, ?, ?)")) {
+            insert.setString(1, timestamp.toString());
+            insert.setObject(2, stage);
+            insert.setObject(3, target);
+            insert.setString(4, reason);
+            insert.executeUpdate();
+        }
+    }
+
+    @Test
+    void rawAndBucketedHistoryKeepBothGapBoundariesWithoutInventingBucketGaps() throws Exception {
+        for (int bucketSeconds : new int[] {0, 600, 3600}) {
+            try (Connection conn = DriverManager.getConnection("jdbc:sqlite::memory:");
+                 Statement stmt = conn.createStatement()) {
+                stmt.execute("CREATE TABLE humidity_readings (timestamp DATETIME, humidity INTEGER)");
+                HumidityMonitor.ensureHistoryColumns(conn);
+                for (int seconds = 0; seconds <= 7200; seconds += 30) {
+                    if (seconds > 120 && seconds < 300) continue;
+                    stmt.execute("INSERT INTO humidity_readings (timestamp, humidity) VALUES "
+                            + "(datetime('now', 'start of day', '-1 day', '+" + seconds + " seconds'), "
+                            + seconds + ")");
+                }
+                try (PreparedStatement query = conn.prepareStatement(
+                        HumidityMonitor.HistoryApiHandler.historyQuery("-7 days", bucketSeconds))) {
+                    query.setString(1, "-7 days");
+                    try (ResultSet rs = query.executeQuery()) {
+                        boolean beforeGap = false;
+                        boolean afterGap = false;
+                        while (rs.next()) {
+                            int seconds = rs.getInt("humidity");
+                            beforeGap |= seconds == 120;
+                            afterGap |= seconds == 300;
+                            assertEquals(seconds == 300, rs.getBoolean("gap_before"));
+                            assertFalse(rs.getBoolean("control_event"));
+                        }
+                        assertTrue(beforeGap);
+                        assertTrue(afterGap);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
     void emitsUtcTimestampsAndKeepsNewestRowInEachBucket() throws Exception {
         try (Connection conn = DriverManager.getConnection("jdbc:sqlite::memory:");
              Statement stmt = conn.createStatement()) {
@@ -137,6 +255,7 @@ class HistoryQueryTest {
                 try (ResultSet rs = query.executeQuery()) {
                     assertTrue(rs.next());
                     assertTrue(rs.getBoolean("control_event"));
+                    assertTrue(rs.getBoolean("gap_before"));
                     assertNull(rs.getString("control_reason"));
                     assertFalse(rs.next());
                 }

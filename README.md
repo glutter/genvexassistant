@@ -8,6 +8,8 @@ A Java 17/Maven service for monitoring and controlling Genvex Optima 270/2010 ve
 
 The dashboard shows the controller's decision alongside the observed, targeted and commanded fan stages. Humidity/fan and temperature views include 3/6/12-hour ranges, retained zoom and recorded control-event explanations. Absolute moisture and its signed 30-minute change show drying progress; device sample time distinguishes stale readings from an unreachable API. Event reasons are available only for readings recorded with version 1.80 or later.
 
+Temporary manual boosts have a countdown and stop control that returns control to automatic evaluation, unless monitor-only mode is enabled. Click recorded events to zoom around them; history range, view and series selections survive reloads. Missing measurements appear as gaps. A separate rolling 24-hour overview reports observed time per fan stage, automatic target increases and unobserved time, independent of the graph range.
+
 ## Features
 
 - Polls humidity, temperatures, fan state, and bypass state every 30 seconds by default.
