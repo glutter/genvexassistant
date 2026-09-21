@@ -13,6 +13,123 @@ import java.time.LocalTime;
 import org.junit.jupiter.api.Test;
 
 class HumidityControlPolicyTest {
+        @Test
+        void liveTelemetryUsesSuccessfulDeviceTimeAndRejectsStaleOrFailedProgress() {
+                HumidityMonitor monitor = new HumidityMonitor("unused", "unused");
+                long now = Instant.parse("2026-09-21T12:00:00Z").toEpochMilli();
+                assertTrue(monitor.liveJson(now).contains("\"sampled_at\":null"));
+                assertTrue(monitor.liveJson(now).contains("\"moisture\":null"));
+                assertEquals(75, HumidityMonitor.staleAfterSeconds(30));
+                assertEquals(150, HumidityMonitor.staleAfterSeconds(60));
+                HumidityMonitor.ControlDecision decision = new HumidityMonitor.ControlDecision(
+                                "Gentle humidity recovery + Heat-loss guard", 2, 1);
+                monitor.recordSuccessfulTelemetry(decision, 60, 20, 50, 7, Instant.ofEpochMilli(now));
+                String live = monitor.liveJson(now + 1000);
+                assertTrue(live.contains("\"sampled_at\":\"2026-09-21T12:00:00Z\""));
+                assertTrue(live.contains("\"humidity_delta\":10.000"));
+                assertTrue(live.contains("\"policy_speed\":2, \"target_speed\":1"));
+                assertTrue(live.contains("\"moisture_change_30m\":null"));
+                String stale = monitor.liveJson(now + 76_000);
+                assertTrue(stale.contains("device data stale"));
+                assertTrue(stale.contains("\"moisture\":null"));
+                monitor.recordFailedPoll();
+                assertTrue(monitor.liveJson(now).contains("\"device_poll_failed\":true"));
+                String failed = monitor.liveJson(now + 2000);
+                assertTrue(failed.contains("device poll failed"));
+                assertTrue(failed.contains("\"sampled_at\":\"2026-09-21T12:00:00Z\""));
+                assertTrue(failed.contains("\"moisture_change_30m\":null"));
+                monitor.recordSuccessfulTelemetry(decision, 60, Double.NaN, 50, 7, Instant.ofEpochMilli(now + 30_000));
+                assertTrue(monitor.liveJson(now + 30_000).contains("\"moisture\":null"));
+                assertTrue(monitor.liveJson(now + 30_000).contains("\"moisture_baseline\":null"));
+        }
+
+        @Test
+        void moistureTrendRequiresContinuousCoverageAndUsesSignedNowMinusPast() {
+                HumidityMonitor.MoistureTrend trend = new HumidityMonitor.MoistureTrend(75_000);
+                for (int sample = 0; sample < 60; sample++) {
+                        assertTrue(Double.isNaN(trend.add(sample * 30_000L, 10 - sample * 0.01)));
+                }
+                assertEquals(-0.6, trend.add(1_800_000, 9.4), 0.00001);
+                assertTrue(Double.isNaN(trend.add(1_900_000, 9.3)));
+                assertTrue(Double.isNaN(trend.add(1_930_000, 9.2)));
+                trend.reset();
+                for (int sample = 0; sample <= 60; sample++) trend.add(sample * 30_000L, 9);
+                assertEquals(0.5, trend.add(1_830_000, 9.5), 0.00001);
+                assertTrue(Double.isNaN(trend.add(1_860_000, Double.NaN)));
+                assertTrue(Double.isNaN(trend.add(1_890_000, 9.4)));
+        }
+
+        @Test
+        void reasonsAreJsonEscapedAndDefrostIsNotFirmwareConfirmed() {
+                assertEquals("\"quoted \\\"reason\\\" \\\\ \\u000a\\u0009\\u0000\"",
+                                HumidityMonitor.jsonString("quoted \"reason\" \\ \n\t\0"));
+                assertEquals("null", HumidityMonitor.jsonString(null));
+                HumidityMonitor.ControlDecision decision = new HumidityMonitor.ControlDecision("Normal", 1, 1);
+                assertTrue(HumidityMonitor.withDefrostReason(decision, HumidityMonitor.DefrostState.ACTIVE)
+                                .reason().contains("Suspected defrost"));
+                assertTrue(HumidityMonitor.withDefrostReason(decision, HumidityMonitor.DefrostState.UNKNOWN)
+                                .reason().contains("Defrost status unknown"));
+        }
+
+        @Test
+        void liveModesKeepSampledDefrostWarningsAndReportAwaitingEvaluationWhenDisabled() throws Exception {
+                HumidityMonitor monitor = new HumidityMonitor("unused", "unused");
+                long now = Instant.parse("2026-09-21T12:00:00Z").toEpochMilli();
+                setMonitorField(monitor, "staticRpmMode", true);
+                setMonitorField(monitor, "staticRpmSpeed", 2);
+                HumidityMonitor.ControlDecision decision = HumidityMonitor.withDefrostReason(
+                                new HumidityMonitor.ControlDecision("Static speed", 2, 2), HumidityMonitor.DefrostState.ACTIVE);
+                monitor.recordSuccessfulTelemetry(decision, 50, 20, Double.NaN, Double.NaN, Instant.ofEpochMilli(now));
+                assertTrue(monitor.liveJson(now).contains("Static speed + Suspected defrost"));
+                setMonitorField(monitor, "staticRpmMode", false);
+                assertTrue(monitor.liveJson(now).contains("Awaiting control evaluation"));
+                setMonitorField(monitor, "manualOverrideActive", true);
+                setMonitorField(monitor, "manualOverrideEndTime", now + 60_000);
+                setMonitorField(monitor, "manualOverrideSpeed", 3);
+                assertTrue(monitor.liveJson(now).contains("\"control_reason\":\"Manual override\""));
+                assertTrue(monitor.liveJson(now).contains("\"policy_speed\":3, \"target_speed\":3"));
+                setMonitorField(monitor, "monitorOnly", true);
+                assertTrue(monitor.liveJson(now).contains("\"control_reason\":\"Monitor only\""));
+                assertTrue(monitor.liveJson(now).contains("\"policy_speed\":null, \"target_speed\":null"));
+                setMonitorField(monitor, "restartInProgress", new java.util.concurrent.atomic.AtomicBoolean(true));
+                assertTrue(monitor.liveJson(now).contains("\"control_reason\":\"Maintenance restart\""));
+        }
+
+        @Test
+        void realRecoveryDecisionHasStableReasonWithoutHumidityDelta() throws Exception {
+                HumidityMonitor monitor = new HumidityMonitor("unused", "unused");
+                setMonitorField(monitor, "boostActive", true);
+                setMonitorField(monitor, "boostBaselineHumidity", 50.0);
+                setMonitorField(monitor, "policyTargetSpeed", 2);
+                setMonitorField(monitor, "commandedFanSpeed", 2);
+                java.lang.reflect.Method update = HumidityMonitor.class.getDeclaredMethod("updateFanSpeed",
+                                int.class, double.class, double.class, double.class, int.class, int.class,
+                                boolean.class, int.class, int.class);
+                update.setAccessible(true);
+                for (int humidity : new int[] {52, 53}) {
+                        HumidityMonitor.ControlDecision decision = (HumidityMonitor.ControlDecision) update.invoke(
+                                        monitor, humidity, 18.0, 15.0, 21.0, 2, 5000, true, 0, 2);
+                        assertEquals("Gentle humidity recovery", decision.reason());
+                        assertEquals(2, decision.policySpeed());
+                        assertEquals(2, decision.targetSpeed());
+                }
+                HumidityMonitor.ControlDecision boost = (HumidityMonitor.ControlDecision) update.invoke(
+                                monitor, 60, 18.0, 15.0, 21.0, 2, 5000, true, 0, 2);
+                assertEquals("Shower boost", boost.reason());
+                assertEquals(3, boost.policySpeed());
+                assertEquals(3, boost.targetSpeed());
+                HumidityMonitor.ControlDecision veryHigh = (HumidityMonitor.ControlDecision) update.invoke(
+                                monitor, 80, 18.0, 15.0, 21.0, 2, 5000, true, 0, 2);
+                assertEquals("Very high humidity", veryHigh.reason());
+                assertEquals(3, veryHigh.policySpeed());
+        }
+
+        private static void setMonitorField(HumidityMonitor monitor, String name, Object value) throws Exception {
+                java.lang.reflect.Field field = HumidityMonitor.class.getDeclaredField(name);
+                field.setAccessible(true);
+                field.set(monitor, value);
+        }
+
     private static final HumidityMonitor.HumidityPolicy DEFAULT_POLICY =
             new HumidityMonitor.HumidityPolicy(4, 1, 3, 1, 30, 65, 80);
     private static final int NO_HYSTERESIS = 0;

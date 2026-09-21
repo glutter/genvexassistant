@@ -159,6 +159,9 @@ public class HumidityMonitor {
     private long lastSunStateCheck = 0;
     private boolean lastSunBelowHorizon = false;
     private boolean sunStateAvailable = false;
+    private ControlTelemetry lastControlTelemetry;
+    private boolean lastPollFailed;
+    private final MoistureTrend moistureTrend = new MoistureTrend(staleAfterSeconds(POLL_INTERVAL) * 1000L);
 
     public HumidityMonitor(String ip, String email) {
         this.client = new GenvexClient(ip, email);
@@ -316,6 +319,11 @@ public class HumidityMonitor {
         addColumnIfMissing(conn, "bypass_open", "INTEGER");
         addColumnIfMissing(conn, "commanded_speed", "INTEGER");
         addColumnIfMissing(conn, "supply_duty", "INTEGER");
+        addColumnIfMissing(conn, "control_reason", "TEXT");
+        addColumnIfMissing(conn, "policy_speed", "INTEGER");
+        addColumnIfMissing(conn, "target_speed", "INTEGER");
+        addColumnIfMissing(conn, "recovery_baseline", "REAL");
+        addColumnIfMissing(conn, "moisture", "REAL");
         try (Statement stmt = conn.createStatement()) {
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_humidity_timestamp ON humidity_readings(timestamp)");
         }
@@ -445,12 +453,41 @@ public class HumidityMonitor {
         return defaultValue;
     }
 
+    static String jsonString(String value) {
+        if (value == null) return "null";
+        StringBuilder json = new StringBuilder("\"");
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            switch (character) {
+                case '"' -> json.append("\\\"");
+                case '\\' -> json.append("\\\\");
+                default -> {
+                    if (character < 0x20 || Character.isSurrogate(character)) {
+                        json.append(String.format(Locale.ROOT, "\\u%04x", (int) character));
+                    } else {
+                        json.append(character);
+                    }
+                }
+            }
+        }
+        return json.append('"').toString();
+    }
+
     class LiveApiHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange t) throws IOException {
-            LiveSnapshot snapshot;
+            String json;
             synchronized (clientLock) {
-                long now = System.currentTimeMillis();
+                json = liveJson(System.currentTimeMillis());
+            }
+            sendJson(t, json);
+        }
+    }
+
+    String liveJson(long now) {
+            LiveSnapshot snapshot;
+            String telemetryJson;
+            synchronized (clientLock) {
                 snapshot = new LiveSnapshot(lastHumidity, lastSupplyTemp, lastOutsideTemp, lastExhaustTemp,
                     lastExtractTemp, lastRpm, lastBypassState, lastObservedFanSpeed, commandedFanSpeed,
                     boostActive,
@@ -461,6 +498,7 @@ public class HumidityMonitor {
                         Math.max(0, (manualOverrideEndTime - now) / 1000),
                         Math.max(0, (boostEndTime - now) / 1000),
                         heatLossState.stepDown() > 0, heatLossState.stepDown());
+                    telemetryJson = liveTelemetryJson(now);
             }
 
             String json = String.format(Locale.ROOT,
@@ -476,8 +514,68 @@ public class HumidityMonitor {
                 snapshot.manualOverrideActive(), snapshot.manualOverrideSecsLeft(), snapshot.boostSecsLeft(),
                 snapshot.heatLossGuardActive(), snapshot.heatLossStepDown()
             );
-            sendJson(t, json);
+            return json.substring(0, json.length() - 1) + telemetryJson + "}";
+    }
+
+    private String liveTelemetryJson(long now) {
+        ControlTelemetry telemetry = lastControlTelemetry;
+        boolean fresh = telemetry != null && !lastPollFailed
+                && now >= telemetry.sampledAt().toEpochMilli()
+                && now - telemetry.sampledAt().toEpochMilli() <= staleAfterSeconds(POLL_INTERVAL) * 1000L;
+        ControlDecision decision = telemetry == null
+                ? new ControlDecision("Awaiting device data", -1, -1) : telemetry.decision();
+        if (restartInProgress.get()) {
+            decision = modeDecision("Maintenance restart", -1, decision);
+        } else if (monitorOnly) {
+            decision = modeDecision("Monitor only", -1, decision);
+        } else if (manualOverrideActive && now < manualOverrideEndTime) {
+            decision = modeDecision("Manual override", manualOverrideSpeed, decision);
+        } else if (staticRpmMode) {
+            decision = modeDecision("Static speed", staticRpmSpeed, decision);
+        } else if (isModeDecision(decision, "Maintenance restart") || isModeDecision(decision, "Monitor only")
+                || isModeDecision(decision, "Manual override") || isModeDecision(decision, "Static speed")) {
+            decision = new ControlDecision("Awaiting control evaluation", -1, -1);
         }
+        String reason = decision.reason();
+        if (telemetry == null && !reason.equals("Awaiting device data")) {
+            reason += " (awaiting device data)";
+        } else if (!fresh && telemetry != null) {
+            reason = "Last decision: " + reason
+                    + (lastPollFailed ? " (device poll failed)" : " (device data stale)");
+        }
+        return String.format(Locale.ROOT,
+                ", \"control_reason\":%s, \"policy_speed\":%s, \"target_speed\":%s, "
+                + "\"humidity_delta\":%s, \"moisture\":%s, \"moisture_baseline\":%s, "
+                + "\"moisture_change_30m\":%s, \"sampled_at\":%s, \"stale_after_seconds\":%d, "
+                + "\"device_poll_failed\":%b",
+                jsonString(reason), jsonSpeed(decision.policySpeed()), jsonSpeed(decision.targetSpeed()),
+                jsonMeasurement(fresh ? telemetry.humidityDelta() : Double.NaN),
+                jsonMeasurement(fresh ? telemetry.moisture() : Double.NaN),
+                jsonMeasurement(fresh ? telemetry.moistureBaseline() : Double.NaN),
+                jsonMeasurement(fresh ? telemetry.moistureChange30m() : Double.NaN),
+                jsonString(telemetry == null ? null : telemetry.sampledAt().toString()),
+                staleAfterSeconds(POLL_INTERVAL), lastPollFailed);
+    }
+
+    private static boolean isModeDecision(ControlDecision decision, String mode) {
+        return decision.reason().equals(mode) || decision.reason().startsWith(mode + " + ");
+    }
+
+    private static ControlDecision modeDecision(String mode, int speed, ControlDecision sampled) {
+        return isModeDecision(sampled, mode) && sampled.policySpeed() == speed && sampled.targetSpeed() == speed
+                ? sampled : new ControlDecision(mode, speed, speed);
+    }
+
+    static long staleAfterSeconds(int pollIntervalSeconds) {
+        return Math.max(75L, (pollIntervalSeconds * 5L + 1) / 2);
+    }
+
+    private static String jsonSpeed(int speed) {
+        return speed < 0 ? "null" : Integer.toString(speed);
+    }
+
+    static String jsonMeasurement(double value) {
+        return Double.isFinite(value) ? String.format(Locale.ROOT, "%.3f", value) : "null";
     }
 
         private record LiveSnapshot(int humidity, double tempSupply, double tempOutside, double tempExhaust,
@@ -551,31 +649,16 @@ public class HumidityMonitor {
                 }
             }
 
-            String timeFilter;
-            int bucketSeconds;
-
-            switch (range) {
-                case "week":
-                    timeFilter = "-7 days";
-                    bucketSeconds = 10 * 60;
-                    break;
-                case "month":
-                    timeFilter = "-30 days";
-                    bucketSeconds = 60 * 60;
-                    break;
-                case "day":
-                default:
-                    timeFilter = "-1 day";
-                    bucketSeconds = 0;
-                    break;
-            }
+            String timeFilter = historyTimeFilter(range);
+            int bucketSeconds = historyBucketSeconds(range);
             
             StringBuilder json = new StringBuilder("[");
             String sql = historyQuery(timeFilter, bucketSeconds);
 
             try (Connection conn = DriverManager.getConnection(DB_URL);
-                 Statement stmt = conn.createStatement();
-                 ResultSet rs = stmt.executeQuery(sql)) {
+                 PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, timeFilter);
+                try (ResultSet rs = stmt.executeQuery()) {
 
                 boolean first = true;
                 while (rs.next()) {
@@ -598,43 +681,85 @@ public class HumidityMonitor {
                         "{\"timestamp\":\"%s\", \"humidity\":%d, \"temp\":%s, \"temp_supply\":%s, " +
                         "\"temp_outside\":%s, \"temp_exhaust\":%s, \"temp_extract\":%s, " +
                         "\"rpm\":%d, \"fan_speed\":%s, \"bypass_open\":%s, " +
-                        "\"commanded_speed\":%s, \"supply_duty\":%s}",
+                        "\"commanded_speed\":%s, \"supply_duty\":%s, " +
+                        "\"control_reason\":%s, \"policy_speed\":%s, \"target_speed\":%s, " +
+                        "\"recovery_baseline\":%s, \"moisture\":%s, \"control_event\":%b}",
                         ts, humidity, tempSupply, tempSupply, tempOutside, tempExhaust, tempExtract, rpm,
-                        fanSpeed, bypassOpen, commandedSpeed, supplyDuty
+                        fanSpeed, bypassOpen, commandedSpeed, supplyDuty,
+                        jsonString(rs.getString("control_reason")), nullableJsonInteger(rs, "policy_speed"),
+                        nullableJsonInteger(rs, "target_speed"), nullableJsonNumber(rs, "recovery_baseline"),
+                        nullableJsonNumber(rs, "moisture", 3), rs.getBoolean("control_event")
                     ));
+                }
                 }
 
             } catch (Exception e) {
-                // Log the error but return empty list so the dashboard doesn't break
                 System.err.println("[HistoryApiHandler] Database error: " + e.getMessage());
-                // If we want to return an empty list, we just continue.
-                // The json StringBuilder already has "["
+                sendError(t, 503, "History unavailable");
+                return;
             }
 
             json.append("]");
             sendJson(t, json.toString());
         }
 
-            static String historyQuery(String timeFilter, int bucketSeconds) {
-                String columns = "timestamp, humidity, temp_supply, temp_outside, temp_exhaust, temp_extract, "
-                    + "fan_rpm, fan_speed_level, bypass_open, commanded_speed, supply_duty";
-                String filtered = " FROM humidity_readings WHERE timestamp >= datetime('now', '" + timeFilter + "')";
-                if (bucketSeconds <= 0) {
-                return "SELECT strftime('%Y-%m-%dT%H:%M:%SZ', timestamp) AS timestamp_utc, "
-                    + columns.substring("timestamp, ".length()) + filtered + " ORDER BY timestamp ASC";
-                }
+        static String historyTimeFilter(String range) {
+            return switch (range) {
+                case "3h" -> "-3 hours";
+                case "6h" -> "-6 hours";
+                case "12h" -> "-12 hours";
+                case "week" -> "-7 days";
+                case "month" -> "-30 days";
+                default -> "-1 day";
+            };
+        }
 
-                return "WITH bucketed AS (SELECT " + columns + ", ROW_NUMBER() OVER (PARTITION BY "
-                    + "CAST(strftime('%s', timestamp) AS INTEGER) / " + bucketSeconds
-                    + " ORDER BY timestamp DESC) AS bucket_rank" + filtered + ") "
-                    + "SELECT strftime('%Y-%m-%dT%H:%M:%SZ', timestamp) AS timestamp_utc, "
-                    + columns.substring("timestamp, ".length())
-                    + " FROM bucketed WHERE bucket_rank = 1 ORDER BY timestamp ASC";
+        static int historyBucketSeconds(String range) {
+            return switch (range) {
+                case "week" -> 600;
+                case "month" -> 3600;
+                default -> 0;
+            };
+        }
+
+        static String historyQuery(String timeFilter, int bucketSeconds) {
+            if (!java.util.Set.of("-3 hours", "-6 hours", "-12 hours", "-1 day", "-7 days", "-30 days")
+                    .contains(timeFilter) || (bucketSeconds != 0 && bucketSeconds != 600 && bucketSeconds != 3600)) {
+                throw new IllegalArgumentException("Unsupported history range");
             }
+                String raw = "WITH selected AS (SELECT rowid AS sample_id, * FROM humidity_readings "
+                    + "WHERE timestamp >= datetime('now', ?1) UNION ALL "
+                    + "SELECT rowid AS sample_id, * FROM humidity_readings WHERE rowid = "
+                    + "(SELECT rowid FROM humidity_readings WHERE timestamp < datetime('now', ?1) "
+                    + "ORDER BY timestamp DESC, rowid DESC LIMIT 1)), raw AS (SELECT *, "
+                    + "LAG(sample_id) OVER samples AS previous_id, "
+                    + "LAG(target_speed) OVER samples AS previous_target, "
+                    + "LAG(commanded_speed) OVER samples AS previous_commanded, "
+                    + "LAG(control_reason) OVER samples AS previous_reason "
+                    + "FROM selected WINDOW samples AS (ORDER BY timestamp, sample_id)), "
+                    + "events AS (SELECT *, (previous_id IS NOT NULL AND "
+                    + "(target_speed IS NOT previous_target OR commanded_speed IS NOT previous_commanded "
+                    + "OR control_reason IS NOT previous_reason)) AS control_event "
+                    + "FROM raw WHERE timestamp >= datetime('now', ?1)) ";
+            String selection = "SELECT strftime('%Y-%m-%dT%H:%M:%SZ', timestamp) AS timestamp_utc, * ";
+            if (bucketSeconds == 0) {
+                return raw + selection + "FROM events ORDER BY timestamp, sample_id";
+            }
+            return raw + ", bucketed AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY "
+                    + "CAST(strftime('%s', timestamp) AS INTEGER) / " + bucketSeconds
+                    + " ORDER BY timestamp DESC, sample_id DESC) AS bucket_rank FROM events) "
+                    + selection + "FROM bucketed WHERE bucket_rank = 1 OR control_event "
+                    + "ORDER BY timestamp, sample_id";
+        }
 
         private static String nullableJsonNumber(ResultSet rs, String columnName) throws SQLException {
+            return nullableJsonNumber(rs, columnName, 1);
+        }
+
+        private static String nullableJsonNumber(ResultSet rs, String columnName, int precision) throws SQLException {
             double value = rs.getDouble(columnName);
-            return rs.wasNull() ? "null" : String.format(Locale.ROOT, "%.1f", value);
+            return rs.wasNull() || !Double.isFinite(value) ? "null"
+                    : String.format(Locale.ROOT, "%." + precision + "f", value);
         }
 
         private static String nullableJsonInteger(ResultSet rs, String columnName) throws SQLException {
@@ -661,9 +786,7 @@ public class HumidityMonitor {
 
         persistControlState(controlStateSnapshot());
 
-        if (saveToDatabase(result.humidity(), result.tempSupply(), result.tempOutside(), result.tempExhaust(),
-            result.tempExtract(), result.supplyRpm(), result.observedFanSpeed(), result.bypassState(),
-            result.commandedFanSpeed(), result.supplyDuty())) {
+        if (saveToDatabase(result)) {
             log("Logged: Humidity=" + result.humidity() + "%, Temp=" + result.tempSupply() + "C, RPM="
                     + result.supplyRpm() + (result.boostActive() ? " [BOOST ACTIVE]" : "")
                     + defrostStatusSuffix(result.defrostState()));
@@ -732,8 +855,9 @@ public class HumidityMonitor {
             int effectiveBypassState = effectiveBypassState(bypassState);
 
             // Apply Fan Speed Control
-            updateFanSpeed(humidity, tempSupply, tempOutside, tempExtract, observedFanSpeed, supplyDuty,
+                ControlDecision decision = updateFanSpeed(humidity, tempSupply, tempOutside, tempExtract, observedFanSpeed, supplyDuty,
                     isDefrosting, effectiveBypassState, setpointReadback);
+                decision = withDefrostReason(decision, defrostState);
 
             log("Polled Data: Humidity=" + humidity + "%, SupplyTempRaw=" + tempSupplyRaw
                 + ", OutsideTempRaw=" + tempOutsideRaw + ", ExhaustTempRaw=" + tempExhaustRaw
@@ -751,13 +875,18 @@ public class HumidityMonitor {
             lastBypassState = bypassState;
             lastObservedFanSpeed = observedFanSpeed;
 
-            return new PollResult(humidity, tempSupply, tempOutside, tempExhaust, tempExtract, supplyRpm,
-                    observedFanSpeed, bypassState, boostActive, defrostState, commandedFanSpeed, supplyDuty);
+                ControlTelemetry telemetry = recordSuccessfulTelemetry(decision, humidity, tempExtract,
+                    boostActive ? boostBaselineHumidity : Double.NaN,
+                    boostActive ? boostBaselineMoisture : Double.NaN, Instant.now());
+                return new PollResult(humidity, tempSupply, tempOutside, tempExhaust, tempExtract, supplyRpm,
+                    observedFanSpeed, bypassState, boostActive, defrostState, commandedFanSpeed, supplyDuty,
+                    telemetry);
 
         } catch (Exception e) {
             logError("Error polling data: " + e.getMessage());
             fanCommandFeedback = new FanCommandFeedback(fanCommandFeedback.attempts(), -1);
             boostRecoveryProgress.reset();
+            recordFailedPoll();
             e.printStackTrace();
             return null;
         } finally {
@@ -765,9 +894,89 @@ public class HumidityMonitor {
         }
     }
 
-    private record PollResult(int humidity, double tempSupply, double tempOutside, double tempExhaust,
+    record PollResult(int humidity, double tempSupply, double tempOutside, double tempExhaust,
             double tempExtract, int supplyRpm, int observedFanSpeed, int bypassState, boolean boostActive,
-            DefrostState defrostState, int commandedFanSpeed, int supplyDuty) {}
+            DefrostState defrostState, int commandedFanSpeed, int supplyDuty, ControlTelemetry control) {}
+
+    record ControlDecision(String reason, int policySpeed, int targetSpeed) {}
+
+    record ControlTelemetry(ControlDecision decision, double recoveryBaseline, double humidityDelta,
+            double moisture, double moistureBaseline, double moistureChange30m, Instant sampledAt) {}
+
+    ControlTelemetry recordSuccessfulTelemetry(ControlDecision decision, int humidity, double tempExtract,
+            double recoveryBaseline, double moistureBaseline, Instant sampledAt) {
+        synchronized (clientLock) {
+            double moisture = tempExtract >= -40 && tempExtract <= 50
+                    ? HumidityPhysics.mixingRatioGramsPerKg(humidity, tempExtract) : Double.NaN;
+            double baseline = recoveryBaseline >= 0 && recoveryBaseline <= 100
+                    ? recoveryBaseline : Double.NaN;
+            double delta = humidity >= 0 && humidity <= 100 ? humidity - baseline : Double.NaN;
+            double validMoistureBaseline = Double.isFinite(moisture) && moistureBaseline >= 0
+                    && Double.isFinite(moistureBaseline) ? moistureBaseline : Double.NaN;
+            lastControlTelemetry = new ControlTelemetry(decision, baseline, delta, moisture,
+                    validMoistureBaseline, moistureTrend.add(sampledAt.toEpochMilli(), moisture), sampledAt);
+            lastPollFailed = false;
+            return lastControlTelemetry;
+        }
+    }
+
+    void recordFailedPoll() {
+        synchronized (clientLock) {
+            lastPollFailed = true;
+            moistureTrend.reset();
+        }
+    }
+
+    static ControlDecision withDefrostReason(ControlDecision decision, DefrostState defrost) {
+        String suffix = switch (defrost) {
+            case ACTIVE -> " + Suspected defrost (fan writes paused)";
+            case UNKNOWN -> " + Defrost status unknown (fan writes paused)";
+            case INACTIVE -> "";
+        };
+        return new ControlDecision(decision.reason() + suffix, decision.policySpeed(), decision.targetSpeed());
+    }
+
+    static final class MoistureTrend {
+        private static final long WINDOW_MILLIS = 30 * 60_000L;
+        private final long maxGapMillis;
+        private final ArrayDeque<MoistureSample> samples = new ArrayDeque<>();
+
+        MoistureTrend(long maxGapMillis) {
+            this.maxGapMillis = Math.min(maxGapMillis, 5 * 60_000L);
+        }
+
+        double add(long now, double moisture) {
+            if (!Double.isFinite(moisture) || moisture < 0) {
+                reset();
+                return Double.NaN;
+            }
+            if (!samples.isEmpty() && (now <= samples.getLast().time()
+                    || now - samples.getLast().time() > maxGapMillis)) {
+                reset();
+            }
+            samples.addLast(new MoistureSample(now, moisture));
+            long targetTime = now - WINDOW_MILLIS;
+            while (samples.size() > 1 && samples.getFirst().time() < targetTime - maxGapMillis) {
+                samples.removeFirst();
+            }
+            if (samples.getFirst().time() > targetTime) return Double.NaN;
+            MoistureSample nearest = null;
+            for (MoistureSample sample : samples) {
+                if (Math.abs(sample.time() - targetTime) <= maxGapMillis
+                        && (nearest == null || Math.abs(sample.time() - targetTime)
+                            < Math.abs(nearest.time() - targetTime))) {
+                    nearest = sample;
+                }
+            }
+            return nearest == null ? Double.NaN : moisture - nearest.moisture();
+        }
+
+        void reset() {
+            samples.clear();
+        }
+
+        private record MoistureSample(long time, double moisture) {}
+    }
 
     /**
      * Address 24 is the fan-speed setpoint this service writes. Reading it back tells us whether the
@@ -1004,21 +1213,21 @@ public class HumidityMonitor {
         }
     }
 
-    private void updateFanSpeed(int humidity, double tempSupply, double tempOutside, double tempExtract,
+    private ControlDecision updateFanSpeed(int humidity, double tempSupply, double tempOutside, double tempExtract,
             int observedFanSpeed, int supplyDuty, boolean isDefrosting, int bypassState,
             int setpointReadback) {
         if (restartInProgress.get()) {
             fanCommandFeedback = new FanCommandFeedback(fanCommandFeedback.attempts(), -1);
             resetHeatLossGuard();
             log("Maintenance restart active. Automatic fan control paused.");
-            return;
+            return new ControlDecision("Maintenance restart", -1, -1);
         }
         if (monitorOnly) {
             fanCommandFeedback = new FanCommandFeedback(fanCommandFeedback.attempts(), -1);
             resetEveningCooling();
             resetHeatLossGuard();
             log("Monitor mode active. Recommended speed: " + NORMAL_SPEED + " (Reason: Monitor Only)");
-            return;
+            return new ControlDecision("Monitor only", -1, -1);
         }
 
         int targetSpeed = NORMAL_SPEED;
@@ -1043,19 +1252,23 @@ public class HumidityMonitor {
             resetEveningCooling();
             automaticControl = false;
             targetSpeed = manualOverrideSpeed;
-            reason = "Manual Override";
+            reason = "Manual override";
         } else if (staticRpmMode) {
             resetEveningCooling();
             automaticControl = false;
             targetSpeed = staticRpmSpeed;
-            reason = "Static RPM Mode";
+            reason = "Static speed";
         } else if (boostActive) {
             coolingSpeed = selectEveningCoolingSpeed(tempSupply, tempOutside, tempExtract, bypassState, now);
-            targetSpeed = selectHumidityRecoverySpeed(humidity, boostBaselineHumidity, HUMIDITY_POLICY, coolingSpeed,
+            int recoverySpeed = selectHumidityRecoverySpeed(humidity, boostBaselineHumidity, HUMIDITY_POLICY, 0,
                     policyTargetSpeed, HUMIDITY_HYSTERESIS);
-            reason = String.format(Locale.ROOT, coolingSpeed > 0
-                ? "Humidity Recovery + Evening Cooling (delta %.1f%%)"
-                : "Humidity Recovery (delta %.1f%%)", humidity - boostBaselineHumidity);
+            targetSpeed = Math.max(recoverySpeed, coolingSpeed);
+            int effectiveVeryHigh = effectiveThreshold(HUMIDITY_VERY_HIGH_THRESHOLD, HUMIDITY_HYSTERESIS,
+                    policyTargetSpeed >= Math.max(3, NORMAL_SPEED));
+            reason = humidity >= effectiveVeryHigh ? "Very high humidity"
+                    : recoverySpeed > Math.max(NORMAL_SPEED, Math.min(2, BOOST_SPEED))
+                    ? "Shower boost" : "Gentle humidity recovery";
+            if (coolingSpeed > 0) reason += " + Evening cooling";
         } else {
             int veryHighSpeed = Math.max(3, NORMAL_SPEED);
             int effectiveVeryHigh = effectiveThreshold(HUMIDITY_VERY_HIGH_THRESHOLD, HUMIDITY_HYSTERESIS,
@@ -1063,7 +1276,7 @@ public class HumidityMonitor {
             if (humidity >= effectiveVeryHigh) {
                 resetEveningCooling();
                 targetSpeed = veryHighSpeed;
-                reason = "Humidity Very High";
+                reason = "Very high humidity";
             } else {
                 coolingSpeed = selectEveningCoolingSpeed(tempSupply, tempOutside, tempExtract, bypassState, now);
                 targetSpeed = selectAutomaticSpeed(humidity, isNightTime, coolingSpeed,
@@ -1071,10 +1284,10 @@ public class HumidityMonitor {
                         policyTargetSpeed, HUMIDITY_HYSTERESIS);
                 int effectiveHigh = effectiveThreshold(HUMIDITY_HIGH_THRESHOLD, HUMIDITY_HYSTERESIS,
                         policyTargetSpeed >= Math.max(2, NORMAL_SPEED));
-                reason = coolingSpeed > 0 ? "Evening Cooling"
-                        : humidity >= effectiveHigh ? "Humidity High"
-                        : isNightTime ? "Night Mode"
-                        : humidity <= HUMIDITY_LOW_THRESHOLD ? "Humidity Low" : "Normal";
+                reason = coolingSpeed > 0 ? "Evening cooling"
+                    : humidity >= effectiveHigh ? "High humidity"
+                    : isNightTime ? "Night mode"
+                    : humidity <= HUMIDITY_LOW_THRESHOLD ? "Low humidity" : "Normal";
             }
         }
 
@@ -1091,7 +1304,7 @@ public class HumidityMonitor {
                     HEAT_LOSS_CONFIG);
             if (guardedSpeed < targetSpeed) {
                 targetSpeed = guardedSpeed;
-                reason += " + Heat Loss Guard";
+                reason += " + Heat-loss guard";
             }
             logHeatLossTransition(previousHeatLossState, heatLossState, moisture, tempExtract, tempOutside,
                     nowMillis);
@@ -1104,7 +1317,7 @@ public class HumidityMonitor {
             targetSpeed = limitNightSpeed(targetSpeed, isNightTime, humidity,
                     boostBaselineHumidity, boostActive, HUMIDITY_POLICY);
             if (targetSpeed < unrestrictedTargetSpeed) {
-                reason += " + Night Noise Limit";
+                reason += " + Night mode";
             }
         }
         
@@ -1141,7 +1354,7 @@ public class HumidityMonitor {
             HeatLossGuardPolicy.describe(heatLossState, nowMillis), outcome));
 
         if (isDefrosting || !decision.send()) {
-            return;
+            return new ControlDecision(reason, policyTarget, targetSpeed);
         }
         if (fanStopped) {
             log("Fan duty is 0 (OFF) but target is " + targetSpeed + ". Re-applying setpoint.");
@@ -1153,6 +1366,7 @@ public class HumidityMonitor {
             commandedFanSpeed = targetSpeed;
         } catch (Exception e) {
             logError("Failed to set fan speed: " + e.getMessage());
+            reason += " + Fan command failed";
         } finally {
             // Record the attempt even when the write failed, so a broken link is paced the same way
             // as a rejected setpoint instead of being retried on every poll.
@@ -1168,6 +1382,7 @@ public class HumidityMonitor {
                 fanCommandFeedback.attempts(),
                 retryIntervalMillis(fanCommandFeedback.attempts(), FAN_PACING) / 60_000));
         }
+            return new ControlDecision(reason, policyTarget, targetSpeed);
     }
 
     /**
@@ -1927,26 +2142,9 @@ public class HumidityMonitor {
         }
     }
 
-    private boolean saveToDatabase(int humidity, double tempSupply, double tempOutside, double tempExhaust,
-            double tempExtract, int rpm, int fanSpeed, int bypassState, int commandedSpeed, int supplyDuty) {
-        String sql = "INSERT INTO humidity_readings (humidity, temp_supply, temp_outside, temp_exhaust, " +
-                     "temp_extract, fan_rpm, fan_speed_level, bypass_open, commanded_speed, supply_duty) " +
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-
-        try (Connection conn = DriverManager.getConnection(DB_URL);
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
-
-            pstmt.setInt(1, humidity);
-            pstmt.setDouble(2, tempSupply);
-            setNullableDouble(pstmt, 3, tempOutside);
-            setNullableDouble(pstmt, 4, tempExhaust);
-            setNullableDouble(pstmt, 5, tempExtract);
-            pstmt.setInt(6, rpm);
-            pstmt.setInt(7, fanSpeed);
-            setNullableInteger(pstmt, 8, bypassState);
-            setNullableInteger(pstmt, 9, commandedSpeed);
-            setNullableInteger(pstmt, 10, supplyDuty);
-            pstmt.executeUpdate();
+    private boolean saveToDatabase(PollResult result) {
+        try (Connection conn = DriverManager.getConnection(DB_URL)) {
+            insertReading(conn, result);
             
             if (dbErrorCount > 0) {
                 log("Database connection restored.");
@@ -1962,6 +2160,34 @@ public class HumidityMonitor {
                 logError("Database error: " + e.getMessage() + " (Suppressing further DB errors)");
             }
             return false;
+        }
+    }
+
+    static void insertReading(Connection connection, PollResult result) throws SQLException {
+        String sql = "INSERT INTO humidity_readings (humidity, temp_supply, temp_outside, temp_exhaust, "
+                + "temp_extract, fan_rpm, fan_speed_level, bypass_open, commanded_speed, supply_duty, "
+                + "control_reason, policy_speed, target_speed, recovery_baseline, moisture, timestamp) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        ControlTelemetry control = result.control();
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setInt(1, result.humidity());
+            setNullableDouble(statement, 2, result.tempSupply());
+            setNullableDouble(statement, 3, result.tempOutside());
+            setNullableDouble(statement, 4, result.tempExhaust());
+            setNullableDouble(statement, 5, result.tempExtract());
+            statement.setInt(6, result.supplyRpm());
+            statement.setInt(7, result.observedFanSpeed());
+            setNullableInteger(statement, 8, result.bypassState());
+            setNullableInteger(statement, 9, result.commandedFanSpeed());
+            setNullableInteger(statement, 10, result.supplyDuty());
+            statement.setString(11, control.decision().reason());
+            setNullableInteger(statement, 12, control.decision().policySpeed());
+            setNullableInteger(statement, 13, control.decision().targetSpeed());
+            setNullableDouble(statement, 14, control.recoveryBaseline());
+            setNullableDouble(statement, 15, control.moisture());
+            statement.setString(16, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+                    .withZone(ZoneOffset.UTC).format(control.sampledAt()));
+            statement.executeUpdate();
         }
     }
 

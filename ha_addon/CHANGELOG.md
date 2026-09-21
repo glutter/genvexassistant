@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.80
+
+- Explain the current control decision on the dashboard, distinguishing gentle recovery, strong boost, cooling, manual control and heat-loss limiting. Show the observed fan stage separately from the policy request, limited target and last commanded stage.
+- Record decision reasons and targets with each new history sample. Mark control changes on the graph and list recent events; preserve short events when downsampling week/month history. Older samples keep unknown reasons rather than inferring an explanation.
+- Default to humidity and fan-stage history, with separate temperature and custom views. Add 3/6/12-hour ranges, keyboard-accessible tabs and native time-window/slider zoom that survives automatic refreshes.
+- Display moisture in g/kg, its signed change over 30 minutes and the recovery baselines. Trend data requires continuous valid observations and becomes unavailable after gaps, missing temperatures or failed polls.
+- Base connection freshness on the last successful device poll, not the browser request. Distinguish stale device data, failed polls, unreachable API and unavailable history; hide startup sentinel measurements. A failed history request keeps already-loaded data clearly labelled.
+- Migrate existing databases in place and restrict history queries to the selected range plus its preceding sample. Add backend and dependency-free dashboard regression tests; fan-control thresholds are unchanged.
+
 ## 1.79
 
 - Handle modest rapid humidity rises with speed 2 instead of immediately demanding full shower boost. Reserve the configured boost speed for a rise above the frozen baseline of at least 8 percentage points or twice `humidity_rise_threshold`, whichever is greater. Existing very-high-humidity protection, configured normal speed and evening cooling still take precedence.

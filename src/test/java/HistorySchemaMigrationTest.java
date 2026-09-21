@@ -36,6 +36,11 @@ class HistorySchemaMigrationTest {
             assertTrue(columns.contains("bypass_open"));
             assertTrue(columns.contains("commanded_speed"));
             assertTrue(columns.contains("supply_duty"));
+            assertTrue(columns.contains("control_reason"));
+            assertTrue(columns.contains("policy_speed"));
+            assertTrue(columns.contains("target_speed"));
+            assertTrue(columns.contains("recovery_baseline"));
+            assertTrue(columns.contains("moisture"));
 
             boolean timestampIndexFound = false;
             try (ResultSet rs = stmt.executeQuery("PRAGMA index_list(humidity_readings)")) {

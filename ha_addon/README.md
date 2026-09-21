@@ -52,6 +52,12 @@ History and active shower state persist in `/data/genvex.db`.
 
 Open **OPEN WEB UI** in the add-on page, or use `http://<HA_IP>:8081` when the port is mapped. It can also be embedded in a Home Assistant Webpage card.
 
+- Operating state shows the recorded control reason and separates observed stage, policy request, limited target and commanded stage. The observed stage is estimated from fan duty, not a firmware confirmation of the command.
+- History starts with humidity and fan stage; temperature and custom views are separate. Select 3/6/12 hours, day, week or month, then narrow the visible interval with the local-time inputs or window slider. Automatic polling preserves zoom; changing the history range resets it.
+- Triangle markers and the recent-event list show changes in target, command or decision reason. New reasons are recorded from version 1.80 onward; earlier readings have no recorded explanation. Week/month downsampling preserves recorded control changes.
+- Moisture is shown in g/kg with a signed 30-minute difference: negative means drying. This needs 30 minutes of continuous valid observations after startup or an interruption. Relative-humidity and moisture recovery baselines are labelled separately; the moisture baseline is unavailable after a restart.
+- Freshness uses the last successful device poll, with a stale threshold of at least 75 seconds or 2.5 polling intervals. A failed poll is flagged immediately; a responding web API alone does not mean the device readings are current. Unavailable history is reported independently of live data.
+
 ## Home Assistant Sensors
 
 The add-on exports:

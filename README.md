@@ -6,6 +6,8 @@ A Java 17/Maven service for monitoring and controlling Genvex Optima 270/2010 ve
 
 ![Genvex Assistant mobile dashboard](Screenshot%202026-08-17%20at%2022.28.32.png)
 
+The dashboard shows the controller's decision alongside the observed, targeted and commanded fan stages. Humidity/fan and temperature views include 3/6/12-hour ranges, retained zoom and recorded control-event explanations. Absolute moisture and its signed 30-minute change show drying progress; device sample time distinguishes stale readings from an unreachable API. Event reasons are available only for readings recorded with version 1.80 or later.
+
 ## Features
 
 - Polls humidity, temperatures, fan state, and bypass state every 30 seconds by default.
@@ -31,6 +33,10 @@ export GENVEX_EMAIL=user@example.com
 The local dashboard is at `http://localhost:8081`. See [`ha_addon/README.md`](ha_addon/README.md) for Home Assistant installation and configuration. See [`ADDRESS_MAP.md`](ADDRESS_MAP.md) for verified datapoints.
 
 Legacy `BOOST_DURATION_MINUTES` and `HUMIDITY_RECOVERY_TOLERANCE` settings remain accepted but no longer affect shower recovery.
+
+## Validation
+
+Run `node --test src/test/dashboard.test.cjs` for the dashboard state, history and zoom tests. Run `./publish.sh --build-only` for the Java tests and local add-on package, without staging, committing or pushing.
 
 ## Disclaimer
 This software is based on reverse engineering and is not affiliated with Genvex or Nabto. Use at your own risk.

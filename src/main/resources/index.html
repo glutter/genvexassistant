@@ -286,6 +286,42 @@
             .range-controls { width: 100%; }
             .status-banner { align-items: flex-start; }
         }
+        .operating-copy { min-width: 0; line-height: 1.6; overflow-wrap: anywhere; }
+        #operating-detail { color: var(--secondary-text); }
+        .moisture-summary { display: flex; flex-wrap: wrap; gap: 12px 24px; padding: 4px 0 14px; font-size: 0.8rem; }
+        .moisture-summary > div { min-width: 0; }
+        #last-updated, #history-status { display: block; }
+        .section-heading { flex-wrap: wrap; }
+        .header { flex-wrap: wrap; }
+        .connection-state { width: auto; padding: 0 8px; }
+        .connection-state span:last-child { display: inline; }
+        .range-controls { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+        .range-btn { min-width: 0; padding: 0 9px; }
+        .chart-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
+        .chart-tab { min-height: 32px; padding: 0 10px; background: transparent; color: var(--secondary-text); border-bottom: 2px solid transparent; border-radius: 0; }
+        .chart-tab[aria-selected="true"] { border-color: var(--accent-color); color: var(--text-color); }
+        .chart-tab:hover { background: var(--surface-hover); }
+        .series-toggle[hidden] { display: none; }
+        .window-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; align-items: end; gap: 8px; margin-top: 10px; }
+        .window-controls label { min-width: 0; }
+        .window-controls input { display: block; width: 100%; min-width: 0; height: 36px; border: 1px solid var(--border-color); border-radius: 4px; padding: 0 6px; background: var(--surface-raised); color: var(--text-color); font: inherit; font-size: 0.76rem; }
+        input:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 2px; }
+        .window-slider { display: flex; align-items: center; gap: 12px; font-size: 0.74rem; margin: 8px 0; }
+        .window-slider input { min-width: 0; flex: 1; accent-color: var(--accent-color); }
+        #window-label { display: block; font-size: 0.72rem; color: var(--secondary-text); overflow-wrap: anywhere; }
+        #window-error { min-height: 1em; color: var(--warning-color); font-size: 0.74rem; }
+        .event-list { margin-top: 8px; border-top: 1px solid var(--border-color); font-size: 0.76rem; }
+        .event-list summary { padding: 9px 0; cursor: pointer; }
+        .event-list summary i { color: var(--warning-color); }
+        .event-list ol { margin: 0; padding: 0 0 0 20px; }
+        .event-list li { padding: 4px 0; line-height: 1.5; overflow-wrap: anywhere; }
+        .event-list p { color: var(--secondary-text); }
+        @media (max-width: 600px) {
+            .chart-header { flex-direction: column; align-items: stretch; }
+            .window-controls { grid-template-columns: minmax(0, 1fr) auto auto; }
+            .window-controls label { grid-column: 1 / -1; }
+            .window-controls button:first-of-type { grid-column: 2; }
+        }
         @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
     </style>
 </head>
@@ -346,7 +382,7 @@
                 </div>
                 <div class="data-point">
                     <div class="data-icon"><i class="fas fa-gauge-high"></i></div>
-                    <div class="data-label">Fan speed</div>
+                    <div class="data-label">Fan stage</div>
                     <div class="data-value" id="live-speed">--</div>
                 </div>
                 <div class="data-point">
@@ -357,7 +393,19 @@
             </div>
         </section>
 
-        <div id="status-banner" class="status-banner" role="status"></div>
+        <section id="status-banner" class="status-banner is-visible" aria-label="Operating state">
+            <i class="fas fa-wind" aria-hidden="true"></i>
+            <div class="operating-copy">
+                <strong id="operating-reason">Operating state unavailable</strong>
+                <div id="operating-stages">Actual stage -- · Target -- · Commanded -- · Policy request --</div>
+                <div id="operating-detail">Humidity above baseline unavailable</div>
+            </div>
+        </section>
+        <div class="moisture-summary" aria-label="Moisture measurements">
+            <div><span class="field-label">Moisture</span><strong id="live-moisture">Unavailable</strong></div>
+            <div><span class="field-label">Change over 30 min</span><strong id="moisture-change">Unavailable</strong></div>
+            <div><span class="field-label">Recovery baseline</span><span id="recovery-baseline">Unavailable</span></div>
+        </div>
 
         <section class="control-grid" aria-label="Ventilation controls">
             <div class="control-card">
@@ -425,25 +473,51 @@
                     <div class="section-meta">Climate and fan activity</div>
                 </div>
                 <div class="range-controls" aria-label="History range">
-                    <button class="range-btn active" onclick="setRange('day')" id="btn-day">Day</button>
-                    <button class="range-btn" onclick="setRange('week')" id="btn-week">Week</button>
-                    <button class="range-btn" onclick="setRange('month')" id="btn-month">Month</button>
+                    <button class="range-btn" onclick="setRange('3h')" id="btn-3h" aria-pressed="false">3h</button>
+                    <button class="range-btn" onclick="setRange('6h')" id="btn-6h" aria-pressed="false">6h</button>
+                    <button class="range-btn" onclick="setRange('12h')" id="btn-12h" aria-pressed="false">12h</button>
+                    <button class="range-btn active" onclick="setRange('day')" id="btn-day" aria-pressed="true">Day</button>
+                    <button class="range-btn" onclick="setRange('week')" id="btn-week" aria-pressed="false">Week</button>
+                    <button class="range-btn" onclick="setRange('month')" id="btn-month" aria-pressed="false">Month</button>
                 </div>
             </div>
+            <div id="history-status" class="section-meta" role="status"></div>
+            <div class="chart-tabs" role="tablist" aria-label="History view" onkeydown="navigateChartTabs(event)">
+                <button class="chart-tab" id="tab-climate" role="tab" aria-selected="true" aria-controls="history-view" onclick="setChartView('climate')">Humidity &amp; fan</button>
+                <button class="chart-tab" id="tab-temperatures" role="tab" aria-selected="false" aria-controls="history-view" tabindex="-1" onclick="setChartView('temperatures')">Temperatures</button>
+                <button class="chart-tab" id="tab-custom" role="tab" aria-selected="false" aria-controls="history-view" tabindex="-1" onclick="setChartView('custom')">Custom</button>
+            </div>
+            <div id="history-view" role="tabpanel" aria-labelledby="tab-climate">
             <div class="chart-series-controls" aria-label="Visible chart series">
                 <button class="series-toggle active" style="--series-color: #36a2eb" data-series="humidity" aria-pressed="true" onclick="toggleSeries('humidity')"><span class="series-swatch"></span>Humidity</button>
                 <button class="series-toggle active" style="--series-color: #51d2a0" data-series="tempSupply" aria-pressed="true" onclick="toggleSeries('tempSupply')"><span class="series-swatch"></span>Supply</button>
                 <button class="series-toggle active" style="--series-color: #f0b45b" data-series="tempExtract" aria-pressed="true" onclick="toggleSeries('tempExtract')"><span class="series-swatch"></span>Indoor</button>
                 <button class="series-toggle active" style="--series-color: #67a8ff" data-series="tempOutside" aria-pressed="true" onclick="toggleSeries('tempOutside')"><span class="series-swatch"></span>Outside</button>
                 <button class="series-toggle" style="--series-color: #ad8be8" data-series="tempExhaust" aria-pressed="false" onclick="toggleSeries('tempExhaust')"><span class="series-swatch"></span>Exhaust</button>
-                <button class="series-toggle active" style="--series-color: #ef6b73" data-series="rpm" aria-pressed="true" onclick="toggleSeries('rpm')"><span class="series-swatch"></span>RPM</button>
-                <button class="series-toggle" style="--series-color: #f4d35e" data-series="fanSpeed" aria-pressed="false" onclick="toggleSeries('fanSpeed')"><span class="series-swatch"></span>Fan speed</button>
+                <button class="series-toggle" style="--series-color: #ef6b73" data-series="rpm" aria-pressed="false" onclick="toggleSeries('rpm')"><span class="series-swatch"></span>RPM</button>
+                <button class="series-toggle active" style="--series-color: #f4d35e" data-series="fanSpeed" aria-pressed="true" onclick="toggleSeries('fanSpeed')"><span class="series-swatch"></span>Actual stage</button>
+                <button class="series-toggle" style="--series-color: #80c9a4" data-series="targetSpeed" aria-pressed="false" onclick="toggleSeries('targetSpeed')"><span class="series-swatch"></span>Target</button>
                 <button class="series-toggle" style="--series-color: #9fb4c7" data-series="commandedSpeed" aria-pressed="false" onclick="toggleSeries('commandedSpeed')"><span class="series-swatch"></span>Commanded</button>
                 <button class="series-toggle" style="--series-color: #e58f65" data-series="bypass" aria-pressed="false" onclick="toggleSeries('bypass')"><i class="fas fa-door-open" aria-hidden="true"></i>Bypass</button>
             </div>
             <div class="chart-container">
-                <canvas id="mainChart"></canvas>
+                <canvas id="mainChart" role="img" aria-label="Humidity and actual fan stage history. Recorded control events are listed below."></canvas>
             </div>
+            </div>
+            <form class="window-controls" onsubmit="event.preventDefault(); applyVisibleWindow()">
+                <label><span class="field-label">Start (local time)</span><input type="datetime-local" id="window-start" step="1" required disabled></label>
+                <label><span class="field-label">End (local time)</span><input type="datetime-local" id="window-end" step="1" required disabled></label>
+                <button class="icon-btn" type="submit" title="Apply time window" aria-label="Apply time window"><i class="fas fa-magnifying-glass-plus" aria-hidden="true"></i></button>
+                <button class="icon-btn" type="button" onclick="resetZoom()" title="Reset zoom" aria-label="Reset zoom"><i class="fas fa-arrows-left-right-to-line" aria-hidden="true"></i></button>
+            </form>
+            <label class="window-slider" for="window-size">Window <input id="window-size" type="range" min="1" max="100" value="100" step="1" oninput="resizeWindow(this.value)" disabled><output id="window-percent" for="window-size">100%</output></label>
+            <output id="window-label" for="window-start window-end">Time window unavailable</output>
+            <div id="window-error" role="status"></div>
+            <details class="event-list" open>
+                <summary><i class="fas fa-caret-up" aria-hidden="true" title="Recorded control event"></i> Recent control events <span id="event-count"></span></summary>
+                <p id="event-empty">No recorded control events in this window.</p>
+                <ol id="recent-events" aria-label="Recent recorded control events"></ol>
+            </details>
         </section>
 
         <details class="maintenance">
@@ -460,23 +534,48 @@
     <script>
         let chart;
         let currentRange = 'day';
+        let liveSequence = 0;
+        let historySequence = 0;
+        let historyController;
+        let lastLiveData = null;
+        let liveReachable = null;
+        let chartView = 'climate';
+        let historyRows = [];
+        let historyBounds = null;
+        let visibleWindow = null;
         const chartSeriesVisibility = {
             humidity: true,
             tempSupply: true,
             tempExtract: true,
             tempOutside: true,
             tempExhaust: false,
-            rpm: true,
-            fanSpeed: false,
+            rpm: false,
+            fanSpeed: true,
+            targetSpeed: false,
             commandedSpeed: false,
             bypass: false
         };
 
         function setRange(range) {
+            if (!['3h', '6h', '12h', 'day', 'week', 'month'].includes(range)) return;
+            if (range !== currentRange) {
+                historyRows = [];
+                historyBounds = null;
+                visibleWindow = null;
+                document.getElementById('window-error').textContent = '';
+                if (chart) {
+                    chart.data.labels = [];
+                    chart.data.datasets.forEach(dataset => { dataset.data = []; });
+                }
+                syncVisibleWindow();
+            }
             currentRange = range;
-            document.querySelectorAll('.range-btn').forEach(btn => btn.classList.remove('active'));
-            document.getElementById('btn-' + range).classList.add('active');
-            fetchData();
+            document.querySelectorAll('.range-btn').forEach(button => {
+                const selected = button.id === 'btn-' + range;
+                button.classList.toggle('active', selected);
+                button.setAttribute('aria-pressed', String(selected));
+            });
+            return fetchHistory();
         }
 
         function showToast(message, type = 'success') {
@@ -486,68 +585,110 @@
             setTimeout(function(){ toast.className = toast.className.replace("show", ""); }, 3000);
         }
 
-        function setConnectionState(state) {
+        function setConnectionState(state, text) {
             const connection = document.getElementById('connection-state');
             const label = document.getElementById('connection-label');
             connection.className = 'connection-state ' + state;
-            label.textContent = state === 'connected' ? 'Connected' : state === 'error' ? 'Offline' : 'Updating';
+            if (label.textContent !== text) label.textContent = text;
+            connection.title = text;
+            connection.setAttribute('aria-label', text);
         }
 
-        async function fetchData() {
-            setConnectionState('updating');
+        function updateFreshness() {
+            const sampledAt = typeof lastLiveData?.sampled_at === 'string'
+                ? Date.parse(lastLiveData.sampled_at) : NaN;
+            const hasSample = Number.isFinite(sampledAt);
+            const threshold = Number.isFinite(lastLiveData?.stale_after_seconds)
+                && lastLiveData.stale_after_seconds > 0 ? lastLiveData.stale_after_seconds : 75;
+            const ageSeconds = hasSample ? Math.max(0, (Date.now() - sampledAt) / 1000) : null;
+            document.getElementById('last-updated').textContent = hasSample
+                ? 'Device sampled ' + new Date(sampledAt).toLocaleString() + ' · ' + Math.floor(ageSeconds) + 's ago'
+                : 'Device sample time unavailable';
+            if (liveReachable === false) setConnectionState('error', 'API unreachable');
+            else if (lastLiveData?.device_poll_failed === true) setConnectionState('error', 'API connected · Device poll failed');
+            else if (!hasSample) setConnectionState('unknown', 'Device freshness unknown');
+            else if (ageSeconds > threshold) setConnectionState('stale', 'API connected · Device stale');
+            else setConnectionState('connected', 'Connected · Device fresh');
+        }
+
+        async function fetchLive() {
+            const sequence = ++liveSequence;
             try {
                 const liveResponse = await fetch('api/live');
                 if (!liveResponse.ok) throw new Error('Live data unavailable');
                 const liveData = await liveResponse.json();
+                if (sequence !== liveSequence) return;
+                lastLiveData = liveData;
+                liveReachable = true;
                 updateLiveDisplay(liveData);
+            } catch (error) {
+                if (sequence !== liveSequence) return;
+                liveReachable = false;
+            }
+            updateFreshness();
+        }
 
-                const response = await fetch('api/history?range=' + currentRange);
+        async function fetchHistory() {
+            const sequence = ++historySequence;
+            const range = currentRange;
+            if (historyController) historyController.abort();
+            historyController = new AbortController();
+            const status = document.getElementById('history-status');
+            status.textContent = 'Loading history';
+            try {
+                const response = await fetch('api/history?range=' + range, { signal: historyController.signal });
                 if (!response.ok) throw new Error('History unavailable');
                 const data = await response.json();
+                if (sequence !== historySequence || range !== currentRange) return;
+                if (!Array.isArray(data)) throw new Error('History unavailable');
                 updateChart(data);
-                setConnectionState('connected');
-                document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                status.textContent = data.length ? '' : 'No history in this range';
             } catch (error) {
-                console.error('Error fetching data:', error);
-                setConnectionState('error');
-                showToast(error.message, 'error');
+                if (sequence !== historySequence || error.name === 'AbortError') return;
+                status.textContent = historyRows.length
+                    ? 'History unavailable · Showing previously loaded data'
+                    : 'History unavailable';
             }
+        }
+
+        async function fetchData() {
+            await Promise.all([fetchLive(), fetchHistory()]);
         }
 
         let isUpdatingMode = false;
 
         function updateLiveDisplay(data) {
-            document.getElementById('live-humidity').textContent = data.humidity + '%';
+            if (data.sampled_at === null) {
+                data = { ...data, humidity: null, temp_supply: null, temp_extract: null,
+                    temp_outside: null, temp_exhaust: null, rpm: null, fan_speed: null, bypass_open: null };
+            }
+            document.getElementById('live-humidity').textContent = measurement(data.humidity, '%');
             document.getElementById('live-temp').textContent = formatTemperature(data.temp_supply);
             document.getElementById('live-temp-extract').textContent = formatTemperature(data.temp_extract);
             document.getElementById('live-temp-outside').textContent = formatTemperature(data.temp_outside);
             document.getElementById('live-temp-exhaust').textContent = formatTemperature(data.temp_exhaust);
-            document.getElementById('live-rpm').textContent = data.rpm;
-            document.getElementById('live-speed').textContent = data.fan_speed;
+            document.getElementById('live-rpm').textContent = measurement(data.rpm);
+            document.getElementById('live-speed').textContent = measurement(data.fan_speed);
             updateBypassDisplay(data.bypass_open);
 
-            const banner = document.getElementById('status-banner');
-            if (data.manual_override_active) {
-                banner.className = 'status-banner is-visible manual';
-                banner.innerHTML = `<i class="fas fa-hourglass-half"></i><span><strong>Manual override</strong> · Speed ${data.commanded_speed} · ${Math.ceil(data.manual_override_secs_left / 60)} min remaining</span>`;
-            } else if (data.boost) {
-                banner.className = 'status-banner is-visible boost';
-                // The recovery target is null until a baseline exists, and after a restart it never gets one.
-                const boostStatus = Number.isFinite(data.boost_recovery_target)
-                    ? `${data.humidity}% → target ${data.boost_recovery_target.toFixed(1)}%`
-                    : `${data.humidity}%`;
-                const guardChip = data.heat_loss_guard ? ` · heat-loss guard (−${data.heat_loss_step_down})` : '';
-                banner.innerHTML = `<i class="fas fa-shower"></i><span><strong>Humidity recovery</strong> · Speed ${data.commanded_speed} · ${boostStatus}${guardChip}</span>`;
-            } else if (data.evening_cooling) {
-                banner.className = 'status-banner is-visible cooling';
-                banner.innerHTML = `<i class="fas fa-moon"></i><span><strong>Evening cooling</strong> · Speed ${data.evening_cooling_speed} · Indoor ${formatTemperature(data.temp_extract)} · Outside ${formatTemperature(data.temp_outside)}</span>`;
-            } else if (data.heat_loss_guard) {
-                banner.className = 'status-banner is-visible guard';
-                banner.innerHTML = `<i class="fas fa-temperature-arrow-down"></i><span><strong>Heat-loss guard</strong> · Speed ${data.commanded_speed} · Holding back ${data.heat_loss_step_down} step${data.heat_loss_step_down === 1 ? '' : 's'} while ${data.humidity}% keeps falling · Indoor ${formatTemperature(data.temp_extract)} · Outside ${formatTemperature(data.temp_outside)}</span>`;
-            } else {
-                banner.className = 'status-banner';
-                banner.textContent = '';
+            document.getElementById('operating-reason').textContent = recordedReason(data.control_reason);
+            document.getElementById('operating-stages').textContent =
+                `Actual stage ${measurement(data.fan_speed)} · Target ${measurement(data.target_speed)} · Commanded ${measurement(data.commanded_speed)} · Policy request ${measurement(data.policy_speed)}`;
+            const details = ['Humidity above baseline ' + signedMeasurement(data.humidity_delta, ' pp')];
+            if (data.boost && !data.monitor_only && !data.static_mode && !data.manual_override_active
+                && Number.isFinite(data.humidity_delta) && Number.isFinite(data.policy_speed)) {
+                details.unshift(data.policy_speed <= 2 ? 'Gentle drying'
+                    : /shower/i.test(data.control_reason || '') ? 'Strong shower boost' : 'Strong humidity boost');
             }
+            if (data.manual_override_active && Number.isFinite(data.manual_override_secs_left)) {
+                details.push(Math.ceil(data.manual_override_secs_left / 60) + ' min override remaining');
+            }
+            document.getElementById('operating-detail').textContent = details.join(' · ');
+            document.getElementById('live-moisture').textContent = measurement(data.moisture, ' g/kg', 2);
+            document.getElementById('moisture-change').textContent = signedMeasurement(data.moisture_change_30m, ' g/kg', 2);
+            document.getElementById('recovery-baseline').textContent =
+                'Relative humidity ' + measurement(data.boost_recovery_target, '% RH', 1)
+                + ' · Moisture ' + measurement(data.moisture_baseline, ' g/kg', 2);
 
             // Only update dropdown control state if user is not actively making updates
             if (!isUpdatingMode) {
@@ -565,7 +706,7 @@
                     staticGroup.style.display = 'flex';
                     document.getElementById('static-speed').value = data.static_speed;
                     modeText.className = 'mode-status static';
-                    modeText.innerHTML = `<i class="fas fa-lock"></i> Fan held continuously at speed ${data.static_speed}.`;
+                    modeText.textContent = `Fixed fan stage requested: ${measurement(data.static_speed)}.`;
                 } else {
                     select.value = 'auto';
                     staticGroup.style.display = 'none';
@@ -573,6 +714,18 @@
                     modeText.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i> Fan adjusts for humidity, cooling, and night schedule.';
                 }
             }
+        }
+
+        function measurement(value, unit = '', digits = null) {
+            return Number.isFinite(value) ? (digits === null ? String(value) : value.toFixed(digits)) + unit : 'Unavailable';
+        }
+
+        function signedMeasurement(value, unit, digits = 1) {
+            return Number.isFinite(value) ? (value > 0 ? '+' : '') + value.toFixed(digits) + unit : 'Unavailable';
+        }
+
+        function recordedReason(reason) {
+            return typeof reason === 'string' && reason.trim() ? reason : 'Reason unavailable';
         }
 
         function formatTemperature(value) {
@@ -598,38 +751,172 @@
         }
 
         function toggleSeries(seriesKey) {
+            if (!(seriesKey in chartSeriesVisibility)) return;
             const visible = !chartSeriesVisibility[seriesKey];
             chartSeriesVisibility[seriesKey] = visible;
-
-            const button = document.querySelector(`[data-series="${seriesKey}"]`);
-            button.classList.toggle('active', visible);
-            button.setAttribute('aria-pressed', String(visible));
-
+            syncSeriesControls();
             if (chart) {
-                const dataset = chart.data.datasets.find(item => item.seriesKey === seriesKey);
-                if (dataset) dataset.hidden = !visible;
                 syncChartAxes();
-                chart.update();
+                chart.update('none');
             }
+        }
+
+        function seriesInView(seriesKey) {
+            if (chartView === 'custom') return true;
+            if (chartView === 'temperatures') return seriesKey.startsWith('temp');
+            return ['humidity', 'fanSpeed', 'targetSpeed', 'commandedSpeed'].includes(seriesKey);
+        }
+
+        function isSeriesVisible(seriesKey) {
+            return seriesInView(seriesKey) && chartSeriesVisibility[seriesKey];
+        }
+
+        function syncSeriesControls() {
+            document.querySelectorAll('[data-series]').forEach(button => {
+                const key = button.dataset.series;
+                button.hidden = !seriesInView(key);
+                button.classList.toggle('active', chartSeriesVisibility[key]);
+                button.setAttribute('aria-pressed', String(chartSeriesVisibility[key]));
+            });
+        }
+
+        function setChartView(view) {
+            if (!['climate', 'temperatures', 'custom'].includes(view)) return;
+            chartView = view;
+            document.querySelectorAll('.chart-tab').forEach(button => {
+                const selected = button.id === 'tab-' + view;
+                button.setAttribute('aria-selected', String(selected));
+                button.tabIndex = selected ? 0 : -1;
+            });
+            document.getElementById('history-view').setAttribute('aria-labelledby', 'tab-' + view);
+            document.getElementById('mainChart').setAttribute('aria-label',
+                (view === 'temperatures' ? 'Temperature' : view === 'custom' ? 'Custom telemetry' : 'Humidity and fan stage')
+                + ' history. Recorded control events are listed below.');
+            syncSeriesControls();
+            syncChartAxes();
+            if (chart) chart.update('none');
+        }
+
+        function navigateChartTabs(event) {
+            const views = ['climate', 'temperatures', 'custom'];
+            const index = views.indexOf(chartView);
+            const next = event.key === 'ArrowRight' ? (index + 1) % views.length
+                : event.key === 'ArrowLeft' ? (index + views.length - 1) % views.length
+                : event.key === 'Home' ? 0 : event.key === 'End' ? views.length - 1 : null;
+            if (next === null) return;
+            event.preventDefault();
+            setChartView(views[next]);
+            document.getElementById('tab-' + views[next]).focus();
         }
 
         function syncChartAxes() {
             if (!chart) return;
-            chart.options.scales.y.display = ['humidity', 'tempSupply', 'tempExtract', 'tempOutside', 'tempExhaust']
-                .some(seriesKey => chartSeriesVisibility[seriesKey]);
-            chart.options.scales.y1.display = chartSeriesVisibility.rpm;
-            chart.options.scales.y2.display = chartSeriesVisibility.fanSpeed
-                || chartSeriesVisibility.commandedSpeed;
-            chart.options.scales.y3.display = chartSeriesVisibility.bypass;
+            chart.data.datasets.forEach(dataset => {
+                dataset.hidden = dataset.seriesKey === 'controlEvents' ? false : !isSeriesVisible(dataset.seriesKey);
+            });
+            chart.options.scales.y.display = isSeriesVisible('humidity');
+            chart.options.scales.yTemp.display = ['tempSupply', 'tempExtract', 'tempOutside', 'tempExhaust'].some(isSeriesVisible);
+            chart.options.scales.y1.display = isSeriesVisible('rpm');
+            chart.options.scales.y2.display = ['fanSpeed', 'targetSpeed', 'commandedSpeed'].some(isSeriesVisible);
+            chart.options.scales.y3.display = isSeriesVisible('bypass');
+        }
+
+        function localDateInput(timestamp) {
+            const date = new Date(timestamp);
+            return new Date(timestamp - date.getTimezoneOffset() * 60000).toISOString().slice(0, 19);
+        }
+
+        function syncVisibleWindow() {
+            const bounds = visibleWindow || historyBounds;
+            if (chart) {
+                if (bounds) {
+                    chart.options.scales.x.min = bounds.start;
+                    chart.options.scales.x.max = bounds.end;
+                } else {
+                    delete chart.options.scales.x.min;
+                    delete chart.options.scales.x.max;
+                }
+                chart.update('none');
+            }
+            ['start', 'end'].forEach(edge => {
+                const input = document.getElementById('window-' + edge);
+                input.disabled = !historyBounds;
+                if (document.activeElement !== input) input.value = bounds ? localDateInput(bounds[edge]) : '';
+            });
+            const duration = historyBounds ? historyBounds.end - historyBounds.start : 0;
+            const percent = duration > 0 && bounds ? Math.min(100, Math.max(1, Math.round((bounds.end - bounds.start) / duration * 100))) : 100;
+            document.getElementById('window-size').disabled = duration <= 0;
+            document.getElementById('window-size').value = percent;
+            document.getElementById('window-percent').textContent = percent + '%';
+            document.getElementById('window-label').textContent = bounds
+                ? (visibleWindow ? 'Zoomed: ' : 'Full range: ') + new Date(bounds.start).toLocaleString() + ' – ' + new Date(bounds.end).toLocaleString()
+                : 'Time window unavailable';
+            renderEvents();
+        }
+
+        function applyVisibleWindow() {
+            const start = new Date(document.getElementById('window-start').value).getTime();
+            const end = new Date(document.getElementById('window-end').value).getTime();
+            const error = document.getElementById('window-error');
+            if (!historyBounds || !Number.isFinite(start) || !Number.isFinite(end) || start >= end
+                || start < Math.floor(historyBounds.start / 1000) * 1000 || end > historyBounds.end) {
+                error.textContent = 'Choose a start before the end, within the loaded history.';
+                return;
+            }
+            error.textContent = '';
+            visibleWindow = { start, end };
+            syncVisibleWindow();
+        }
+
+        function resizeWindow(value) {
+            if (!historyBounds || historyBounds.end <= historyBounds.start) return;
+            const fraction = Math.min(1, Math.max(0.01, Number(value) / 100));
+            const bounds = visibleWindow || historyBounds;
+            const duration = (historyBounds.end - historyBounds.start) * fraction;
+            const center = (bounds.start + bounds.end) / 2;
+            const start = Math.max(historyBounds.start, Math.min(historyBounds.end - duration, center - duration / 2));
+            visibleWindow = fraction === 1 ? null : { start, end: start + duration };
+            document.getElementById('window-error').textContent = '';
+            syncVisibleWindow();
+        }
+
+        function resetZoom() {
+            visibleWindow = null;
+            document.getElementById('window-error').textContent = '';
+            syncVisibleWindow();
+        }
+
+        function eventDescription(row) {
+            return recordedReason(row.control_reason) + ` · Commanded ${measurement(row.commanded_speed)} · Actual ${measurement(row.fan_speed)} · Target ${measurement(row.target_speed)} · Policy request ${measurement(row.policy_speed)}`;
+        }
+
+        function renderEvents() {
+            const bounds = visibleWindow || historyBounds;
+            const events = historyRows.filter(row => row.control_event === true && bounds
+                && row.timestamp >= bounds.start && row.timestamp <= bounds.end);
+            const list = document.getElementById('recent-events');
+            list.replaceChildren();
+            events.slice(-5).reverse().forEach(row => {
+                const item = document.createElement('li');
+                item.textContent = new Date(row.timestamp).toLocaleString() + ' · ' + eventDescription(row);
+                list.appendChild(item);
+            });
+            document.getElementById('event-count').textContent = events.length ? '(latest ' + Math.min(5, events.length) + ' of ' + events.length + ')' : '';
+            document.getElementById('event-empty').hidden = events.length > 0;
         }
 
         function updateChart(data) {
+            data = data.map(row => ({ ...row, timestamp: typeof row.timestamp === 'number' ? row.timestamp : Date.parse(row.timestamp) }))
+                .filter(row => Number.isFinite(row.timestamp)).sort((first, second) => first.timestamp - second.timestamp);
+            historyRows = data;
+            historyBounds = data.length ? { start: data[0].timestamp, end: data[data.length - 1].timestamp } : null;
             const ctx = document.getElementById('mainChart').getContext('2d');
             
             const timestamps = data.map(d => d.timestamp);
             const humidity = data.map(d => d.humidity);
             const rpm = data.map(d => d.rpm);
             const fanSpeed = data.map(d => d.fan_speed);
+            const targetSpeed = data.map(d => d.target_speed ?? null);
             const commandedSpeed = data.map(d => d.commanded_speed ?? null);
             const bypass = data.map(d => d.bypass_open == null
                 ? null : (d.bypass_open === true || d.bypass_open === 1 ? 1 : 0));
@@ -638,11 +925,7 @@
             const tempOutside = data.map(d => d.temp_outside);
             const tempExhaust = data.map(d => d.temp_exhaust);
 
-            if (chart) {
-                chart.destroy();
-            }
-
-            chart = new Chart(ctx, {
+            const configuration = {
                 type: 'line',
                 data: {
                     labels: timestamps,
@@ -653,7 +936,7 @@
                             data: humidity,
                             borderColor: '#36a2eb',
                             yAxisID: 'y',
-                            tension: 0.4,
+                            tension: 0,
                             pointRadius: 0,
                             borderWidth: 2,
                             hidden: !chartSeriesVisibility.humidity
@@ -663,8 +946,8 @@
                             label: 'Supply (°C)',
                             data: tempSupply,
                             borderColor: '#51d2a0',
-                            yAxisID: 'y',
-                            tension: 0.4,
+                            yAxisID: 'yTemp',
+                            tension: 0,
                             pointRadius: 0,
                             borderWidth: 2,
                             hidden: !chartSeriesVisibility.tempSupply
@@ -674,8 +957,8 @@
                             label: 'Indoor (°C)',
                             data: tempExtract,
                             borderColor: '#f0b45b',
-                            yAxisID: 'y',
-                            tension: 0.4,
+                            yAxisID: 'yTemp',
+                            tension: 0,
                             pointRadius: 0,
                             borderWidth: 2,
                             hidden: !chartSeriesVisibility.tempExtract
@@ -685,8 +968,8 @@
                             label: 'Outside (°C)',
                             data: tempOutside,
                             borderColor: '#67a8ff',
-                            yAxisID: 'y',
-                            tension: 0.4,
+                            yAxisID: 'yTemp',
+                            tension: 0,
                             pointRadius: 0,
                             borderWidth: 2,
                             hidden: !chartSeriesVisibility.tempOutside
@@ -696,8 +979,8 @@
                             label: 'Exhaust (°C)',
                             data: tempExhaust,
                             borderColor: '#ad8be8',
-                            yAxisID: 'y',
-                            tension: 0.4,
+                            yAxisID: 'yTemp',
+                            tension: 0,
                             pointRadius: 0,
                             borderWidth: 2,
                             hidden: !chartSeriesVisibility.tempExhaust
@@ -716,7 +999,7 @@
                         },
                         {
                             seriesKey: 'fanSpeed',
-                            label: 'Fan speed',
+                            label: 'Actual fan stage',
                             data: fanSpeed,
                             borderColor: '#f4d35e',
                             yAxisID: 'y2',
@@ -725,6 +1008,18 @@
                             borderWidth: 2,
                             borderDash: [5, 3],
                             hidden: !chartSeriesVisibility.fanSpeed
+                        },
+                        {
+                            seriesKey: 'targetSpeed',
+                            label: 'Target stage',
+                            data: targetSpeed,
+                            borderColor: '#80c9a4',
+                            yAxisID: 'y2',
+                            stepped: true,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                            borderDash: [3, 3],
+                            hidden: !chartSeriesVisibility.targetSpeed
                         },
                         {
                             seriesKey: 'commandedSpeed',
@@ -751,10 +1046,23 @@
                             fill: true,
                             spanGaps: false,
                             hidden: !chartSeriesVisibility.bypass
+                        },
+                        {
+                            seriesKey: 'controlEvents',
+                            label: 'Recorded control event',
+                            data: data.map(row => row.control_event === true ? 0.96 : null),
+                            yAxisID: 'events',
+                            showLine: false,
+                            pointStyle: 'triangle',
+                            pointRadius: 5,
+                            pointHitRadius: 12,
+                            borderColor: '#f0b45b',
+                            backgroundColor: '#f0b45b'
                         }
                     ]
                 },
                 options: {
+                    animation: false,
                     responsive: true,
                     maintainAspectRatio: false,
                     interaction: {
@@ -772,9 +1080,14 @@
                             borderColor: '#444',
                             borderWidth: 1,
                             callbacks: {
-                                label: context => context.dataset.seriesKey === 'bypass'
-                                    ? `Bypass: ${context.parsed.y === 1 ? 'Open' : 'Closed'}`
-                                    : `${context.dataset.label}: ${context.formattedValue}`
+                                label: context => {
+                                    if (context.dataset.seriesKey === 'controlEvents') {
+                                        return eventDescription(historyRows[context.dataIndex]).match(/.{1,38}(?:\s|$)|\S{1,38}/g);
+                                    }
+                                    return context.dataset.seriesKey === 'bypass'
+                                        ? `Bypass: ${context.parsed.y === 1 ? 'Open' : 'Closed'}`
+                                        : `${context.dataset.label}: ${context.formattedValue}`;
+                                }
                             }
                         }
                     },
@@ -804,17 +1117,25 @@
                         },
                         y: {
                             type: 'linear',
-                            display: ['humidity', 'tempSupply', 'tempExtract', 'tempOutside', 'tempExhaust']
-                                .some(seriesKey => chartSeriesVisibility[seriesKey]),
+                            display: true,
                             position: 'left',
                             title: {
                                 display: true,
-                                text: 'Humidity % / Temp °C',
+                                text: 'Humidity % RH',
                                 color: '#b0b0b0'
                             },
                             ticks: { color: '#b0b0b0' },
                             grid: { color: 'rgba(255, 255, 255, 0.05)' }
                         },
+                        yTemp: {
+                            type: 'linear',
+                            display: false,
+                            position: 'left',
+                            title: { display: true, text: 'Temperature °C', color: '#b0b0b0' },
+                            ticks: { color: '#b0b0b0' },
+                            grid: { drawOnChartArea: false }
+                        },
+                        events: { type: 'linear', display: false, min: 0, max: 1 },
                         y1: {
                             type: 'linear',
                             display: chartSeriesVisibility.rpm,
@@ -840,7 +1161,7 @@
                             grid: { drawOnChartArea: false },
                             title: {
                                 display: true,
-                                text: 'Speed',
+                                text: 'Fan stage',
                                 color: '#b0b0b0'
                             }
                         },
@@ -864,13 +1185,19 @@
                         }
                     }
                 }
-            });
+            };
+            if (chart) chart.data = configuration.data;
+            else chart = new Chart(ctx, configuration);
+            syncChartAxes();
+            syncVisibleWindow();
         }
 
         // Initial load
+        syncSeriesControls();
         fetchData();
         // Auto refresh every 30s
         setInterval(fetchData, 30000);
+        setInterval(updateFreshness, 1000);
 
         async function triggerQuickBoost(minutes) {
              // Default to Speed 3 for quick boost
