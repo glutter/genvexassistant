@@ -712,7 +712,7 @@ public class HumidityMonitor {
 
             int observedFanSpeed = estimateFanSpeed(supplyRpm, supplyDuty);
                 checkBoostLogic(humidity, baselines, tempExtract,
-                    !isDefrosting && observedFanSpeed >= Math.max(BOOST_SPEED, NORMAL_SPEED));
+                    !isDefrosting && observedFanSpeed >= Math.max(Math.min(2, BOOST_SPEED), NORMAL_SPEED));
             int setpointReadback = readFanSetpoint(observedFanSpeed);
             if (commandedFanSpeed == -1) {
                 // After a restart the unit's own setpoint is what we are actually tracking; the
@@ -1051,11 +1051,11 @@ public class HumidityMonitor {
             reason = "Static RPM Mode";
         } else if (boostActive) {
             coolingSpeed = selectEveningCoolingSpeed(tempSupply, tempOutside, tempExtract, bypassState, now);
-            targetSpeed = selectHumidityRecoverySpeed(humidity, HUMIDITY_POLICY, coolingSpeed,
+            targetSpeed = selectHumidityRecoverySpeed(humidity, boostBaselineHumidity, HUMIDITY_POLICY, coolingSpeed,
                     policyTargetSpeed, HUMIDITY_HYSTERESIS);
             reason = String.format(Locale.ROOT, coolingSpeed > 0
-                ? "Shower Boost + Evening Cooling (delta %.1f%%)"
-                : "Shower Boost (delta %.1f%%)", humidity - boostBaselineHumidity);
+                ? "Humidity Recovery + Evening Cooling (delta %.1f%%)"
+                : "Humidity Recovery (delta %.1f%%)", humidity - boostBaselineHumidity);
         } else {
             int veryHighSpeed = Math.max(3, NORMAL_SPEED);
             int effectiveVeryHigh = effectiveThreshold(HUMIDITY_VERY_HIGH_THRESHOLD, HUMIDITY_HYSTERESIS,
@@ -1299,16 +1299,23 @@ public class HumidityMonitor {
     record HumidityPolicy(int riseThreshold, int recoveryTolerance, int boostSpeed,
             int normalSpeed, int lowThreshold, int highThreshold, int veryHighThreshold) {}
 
-    static int selectHumidityRecoverySpeed(int humidity, HumidityPolicy policy, int coolingSpeed,
-            int currentSpeed, int hysteresis) {
+        static int selectHumidityRecoverySpeed(int humidity, double baselineHumidity, HumidityPolicy policy,
+            int coolingSpeed, int currentSpeed, int hysteresis) {
         int boostSpeed = Math.max(policy.normalSpeed(), policy.boostSpeed());
+        int gentleSpeed = Math.max(policy.normalSpeed(), Math.min(2, policy.boostSpeed()));
+        int strongRiseThreshold = Math.max(8, policy.riseThreshold() * 2);
+        int effectiveStrongRise = effectiveThreshold(strongRiseThreshold,
+            Math.min(hysteresis, strongRiseThreshold - policy.riseThreshold()),
+            currentSpeed >= boostSpeed && boostSpeed > gentleSpeed);
+        int recoverySpeed = !Double.isFinite(baselineHumidity)
+            || humidity - baselineHumidity >= effectiveStrongRise ? boostSpeed : gentleSpeed;
         int veryHighSpeed = Math.max(3, policy.normalSpeed());
         int absoluteHumiditySpeed = humidity >= effectiveThreshold(policy.veryHighThreshold(),
                 hysteresis, currentSpeed >= veryHighSpeed)
             ? veryHighSpeed
             : selectHumiditySpeed(humidity, policy.lowThreshold(), policy.highThreshold(),
                 policy.normalSpeed(), currentSpeed, hysteresis);
-        return Math.max(coolingSpeed, Math.max(boostSpeed, absoluteHumiditySpeed));
+        return Math.max(coolingSpeed, Math.max(recoverySpeed, absoluteHumiditySpeed));
     }
 
     static boolean hasHumidityRise(int humidity, double baselineHumidity, HumidityPolicy policy) {
@@ -1710,7 +1717,7 @@ public class HumidityMonitor {
             if (rapidRise) {
                 log(String.format(Locale.ROOT,
                 "Rapid humidity rise detected (%d%% current, pre-rise baseline %.1f%%,"
-                + " at least %d points within %d min). Activating boost.",
+                + " at least %d points within %d min). Activating humidity recovery.",
                 currentHumidity, baselineHumidity, HUMIDITY_RISE_THRESHOLD,
                 HUMIDITY_RISE_WINDOW_MS / 60_000));
                 activateBoost(currentHumidity, baselineHumidity, baselines.moistureAverage(), tempExtract);
@@ -1733,7 +1740,7 @@ public class HumidityMonitor {
                 } else if (boostRecoveryProgress.update(currentHumidity, moisture, rapidRise,
                     boostVentilationActive && !(manualOverrideActive && now < manualOverrideEndTime), now)) {
                 log(String.format(Locale.ROOT,
-                    "Shower boost stalled: no moisture fall of %.1f %s over %d min at boost speed"
+                    "Humidity recovery stalled: no moisture fall of %.1f %s over %d min at recovery speed"
                     + " (current %d%%, recovery target %.1f%%). Returning to normal humidity control.",
                         Double.isFinite(moisture) ? BOOST_PROGRESS_G_PER_KG : BOOST_PROGRESS_HUMIDITY_POINTS,
                     Double.isFinite(moisture) ? "g/kg" : "humidity points",
@@ -1757,11 +1764,11 @@ public class HumidityMonitor {
         boostEndTime = 0;
         log(Double.isFinite(boostBaselineMoisture)
                 ? String.format(Locale.ROOT,
-                    "Shower boost activated at %d%% humidity; maintaining boost until moisture returns to"
+                    "Humidity recovery activated at %d%% humidity; adapting speed until moisture returns to"
                     + " %.2f g/kg (pre-rise baseline %.1f%% RH), or drying stalls.",
                     activationHumidity, boostBaselineMoisture, baselineHumidity)
                 : String.format(Locale.ROOT,
-                    "Shower boost activated at %d%% humidity; maintaining boost until humidity returns to %.1f%%"
+                    "Humidity recovery activated at %d%% humidity; adapting speed until humidity returns to %.1f%%"
                     + ", or drying stalls.",
                     activationHumidity, baselineHumidity));
     }

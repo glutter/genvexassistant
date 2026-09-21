@@ -14,6 +14,47 @@ class ShowerBoostTest {
     }
 
     @Test
+    void smallEveningRiseUsesSpeedTwoInsteadOfShowerSpeed() {
+        assertEquals(2, HumidityMonitor.selectHumidityRecoverySpeed(59, 54.6, POLICY, 0, 1, 3));
+        assertEquals(2, HumidityMonitor.selectHumidityRecoverySpeed(61, 54.6, POLICY, 0, 2, 3));
+    }
+
+    @Test
+    void clearShowerEscalatesImmediatelyAndStepsDownWithHysteresis() {
+        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(79, 54.6, POLICY, 0, 2, 3));
+        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(63, 55.0, POLICY, 0, 2, 3));
+        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(60, 55.0, POLICY, 0, 3, 3));
+        assertEquals(2, HumidityMonitor.selectHumidityRecoverySpeed(59, 55.0, POLICY, 0, 3, 3));
+        assertEquals(2, HumidityMonitor.selectHumidityRecoverySpeed(60, 55.0, POLICY, 0, 2, 3));
+        assertEquals(2, HumidityMonitor.selectHumidityRecoverySpeed(62, 55.0, POLICY, 0, 2, 3));
+    }
+
+    @Test
+    void gentleRecoveryContinuesWhileDryingWithoutReturningToSpeedThree() {
+        HumidityMonitor.BoostRecoveryProgress progress = progress();
+        int speed = 1;
+        for (int poll = 0; poll <= 120; poll++) {
+            int humidity = 61 - poll / 30;
+            speed = HumidityMonitor.selectHumidityRecoverySpeed(humidity, 54.6, POLICY, 0, speed, 3);
+            assertEquals(2, speed);
+            assertFalse(progress.update(humidity,
+                    HumidityPhysics.mixingRatioGramsPerKg(humidity, 20.5), false, speed >= 2,
+                    poll * 30_000L));
+        }
+    }
+
+    @Test
+    void gentleRecoveryStallIsObservedAtSpeedTwo() {
+        HumidityMonitor.BoostRecoveryProgress progress = progress();
+        int speed = 1;
+        for (int poll = 0; poll <= 60; poll++) {
+            speed = HumidityMonitor.selectHumidityRecoverySpeed(59, 54.6, POLICY, 0, speed, 3);
+            assertEquals(2, speed);
+            assertEquals(poll == 60, progress.update(59, 8.9, false, speed >= 2, poll * 30_000L));
+        }
+    }
+
+    @Test
     void slowWeatherRiseNeverTriggersEvenAboveTheLongTermBaseline() {
         HumidityMonitor.HumidityRiseDetector detector = detector();
         for (int poll = 0; poll <= 160; poll++) {
@@ -114,7 +155,7 @@ class ShowerBoostTest {
             assertEquals(poll < 60, active, "Recovery state at poll " + poll);
         }
         assertEquals(2, HumidityMonitor.selectAutomaticSpeed(68, false, 0, 30, 65, 1, 3, 3));
-        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(80, POLICY, 0, 3, 3));
+        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(80, restored.boostBaseline(), POLICY, 0, 3, 3));
     }
 
     @Test

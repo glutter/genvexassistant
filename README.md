@@ -9,8 +9,9 @@ A Java 17/Maven service for monitoring and controlling Genvex Optima 270/2010 ve
 ## Features
 
 - Polls humidity, temperatures, fan state, and bypass state every 30 seconds by default.
-- Detects showers only when the configured rise (default 4 percentage points) occurs within 5 minutes and exceeds the rolling humidity baseline, filtering out slow weather-related drift.
-- Runs the configured boost speed while the air dries toward its pre-shower absolute moisture level. Returns to normal humidity control if 30 minutes at boost speed produce no measurable drying progress, so a stale baseline cannot hold boost indefinitely.
+- Starts humidity recovery when the configured rise (default 4 percentage points) occurs within 5 minutes and exceeds the rolling humidity baseline, filtering out slow weather-related drift.
+- Uses speed 2 for modest rises. With defaults, an 8-point rise above the frozen baseline selects full boost; falling below 5 points returns to gentle recovery. Very high humidity still gets priority.
+- Dries toward the pre-rise absolute moisture level. Returns to normal humidity control if 30 minutes at gentle recovery speed or higher produce no measurable drying progress, so a stale baseline cannot hold recovery indefinitely.
 - Guards against heat loss in cold weather: steps humidity-driven ventilation down one speed at a time and keeps each step only while the mixing ratio is measurably still falling, never below normal speed and never above 80 % humidity.
 - Applies steady-humidity, night, defrost, manual, static, and evening-cooling policies.
 - Paces fan writes with a humidity deadband, setpoint read-back, and exponential backoff, so a unit that rejects a setpoint settles instead of cycling between two speeds.

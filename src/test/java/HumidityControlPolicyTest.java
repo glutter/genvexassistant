@@ -230,10 +230,10 @@ class HumidityControlPolicyTest {
         }
 
     @Test
-    void showerBoostKeepsFullSpeedUntilHumidityRecovers() {
-        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(60, DEFAULT_POLICY, 0, 3,
+        void showerBoostStepsDownBeforeHumidityFullyRecovers() {
+                assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(60, 50.0, DEFAULT_POLICY, 0, 3,
                 NO_HYSTERESIS));
-        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(53, DEFAULT_POLICY, 0, 3,
+                assertEquals(2, HumidityMonitor.selectHumidityRecoverySpeed(53, 50.0, DEFAULT_POLICY, 0, 3,
                 NO_HYSTERESIS));
     }
 
@@ -245,12 +245,55 @@ class HumidityControlPolicyTest {
 
     @Test
     void showerBoostNeverUndercutsConfiguredOrAbsoluteProtection() {
-        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(65, DEFAULT_POLICY, 0, 3,
+                assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(65, 55.0, DEFAULT_POLICY, 0, 3,
                 NO_HYSTERESIS));
         HumidityMonitor.HumidityPolicy limitedBoost =
             new HumidityMonitor.HumidityPolicy(4, 1, 2, 1, 30, 65, 80);
-        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(80, limitedBoost, 0, 2,
+        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(80, 79.0, limitedBoost, 0, 2,
                 NO_HYSTERESIS));
+    }
+
+    @Test
+    void coldWeatherGuardCannotReboostAModestEventAboveSpeedTwo() {
+        HeatLossGuardPolicy.HeatLossState guard = HeatLossGuardPolicy.HeatLossState.IDLE;
+        int policyTarget = 1;
+        for (int poll = 0; poll <= 80; poll++) {
+            int humidity = poll < 20 ? 59 : poll < 60 ? 56 : 61;
+            policyTarget = HumidityMonitor.selectHumidityRecoverySpeed(humidity, 54.6,
+                    DEFAULT_POLICY, 0, policyTarget, 3);
+            guard = HeatLossGuardPolicy.evaluate(guard, policyTarget, humidity,
+                    HumidityPhysics.mixingRatioGramsPerKg(humidity, 20.4), 20.4, 10.1,
+                    1_000L + poll * 30_000L, DEFAULT_HEAT_LOSS);
+            int speed = HeatLossGuardPolicy.guardedSpeed(policyTarget, 0, guard, DEFAULT_HEAT_LOSS);
+            assertEquals(2, policyTarget);
+            assertTrue(speed >= 1 && speed <= 2, "Speed at poll " + poll);
+            if (poll == 0 || poll == 40 || poll == 60) {
+                assertEquals(2, speed);
+            }
+        }
+        policyTarget = HumidityMonitor.selectHumidityRecoverySpeed(79, 54.6,
+                DEFAULT_POLICY, 0, policyTarget, 3);
+        guard = HeatLossGuardPolicy.evaluate(guard, policyTarget, 79,
+                HumidityPhysics.mixingRatioGramsPerKg(79, 20.4), 20.4, 10.1,
+                2_431_000L, DEFAULT_HEAT_LOSS);
+        assertEquals(3, HeatLossGuardPolicy.guardedSpeed(policyTarget, 0, guard, DEFAULT_HEAT_LOSS));
+    }
+
+    @Test
+    void gentleRecoveryHonoursConfiguredSpeedsAndMissingBaselineIsConservative() {
+        for (int boostSpeed : new int[] {1, 2, 3, 4}) {
+            HumidityMonitor.HumidityPolicy policy =
+                    new HumidityMonitor.HumidityPolicy(4, 1, boostSpeed, 1, 30, 65, 80);
+            assertEquals(Math.min(2, boostSpeed), HumidityMonitor.selectHumidityRecoverySpeed(
+                    59, 54.6, policy, 0, 1, 3));
+            assertEquals(Math.max(2, boostSpeed), HumidityMonitor.selectHumidityRecoverySpeed(
+                    70, 54.6, policy, 0, 1, 3));
+        }
+        HumidityMonitor.HumidityPolicy highNormal =
+                new HumidityMonitor.HumidityPolicy(4, 1, 3, 4, 30, 65, 80);
+        assertEquals(4, HumidityMonitor.selectHumidityRecoverySpeed(59, 54.6, highNormal, 0, 4, 3));
+        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(59, Double.NaN,
+                DEFAULT_POLICY, 0, 1, 3));
     }
 
     @Test
@@ -279,9 +322,9 @@ class HumidityControlPolicyTest {
 
     @Test
     void recoveryNeverLowersAnActiveCoolingTarget() {
-        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(47, DEFAULT_POLICY, 3, 3,
+                assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(47, 45.0, DEFAULT_POLICY, 3, 3,
                 NO_HYSTERESIS));
-        assertEquals(2, HumidityMonitor.selectHumidityRecoverySpeed(49,
+                assertEquals(2, HumidityMonitor.selectHumidityRecoverySpeed(49, 45.0,
             new HumidityMonitor.HumidityPolicy(4, 1, 2, 1, 30, 65, 80), 2, 2, NO_HYSTERESIS));
         }
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.79
+
+- Handle modest rapid humidity rises with speed 2 instead of immediately demanding full shower boost. Reserve the configured boost speed for a rise above the frozen baseline of at least 8 percentage points or twice `humidity_rise_threshold`, whichever is greater. Existing very-high-humidity protection, configured normal speed and evening cooling still take precedence.
+- Step back to gentle recovery as the excess humidity falls, with the configured deadband preventing speed chatter. With defaults, full boost starts at an 8-point rise, drops below 5 points, and cannot restart until the rise reaches 8 points again. The heat-loss guard can reduce this target but cannot turn a modest event back into speed 3.
+- Count observed gentle-recovery airflow toward the 30-minute stalled-drying check, while retaining interruption, manual-control and defrost protections. Log these events as humidity recovery rather than assuming every small rise is a shower.
+- Add regression tests for the small evening rises, strong shower escalation, recovery hysteresis, continued drying at speed 2, stalled gentle recovery and cold-weather guard interactions.
+
 ## 1.78
 
 - Release a shower boost that makes no measurable drying progress over 30 minutes at the observed boost speed, including boosts restored with an obsolete pre-shower baseline. Require a fall of at least 0.3 g/kg, or 2 humidity percentage points when extract temperature is unavailable. Ordinary high-humidity protection remains active after release.
