@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.82
+
+- Keep 13 months of history instead of one month (about 1.1 million rows per year at the default 30-second poll), so a full heating season can be analysed. Rows already removed by earlier versions cannot be recovered. Fan control is unchanged.
+- Add `GenvexProbe`, a read-only diagnostic that dumps datapoints and setpoints 0-127 with the unit's setpoint-read command and labels them with the genvexnabto Optima 270 addresses for comparison. An optional watch mode samples supply duty, setpoint 7 and datapoint 24 over time. The probe never writes to the unit.
+
 ## 1.81
 
 - Add a countdown and stop button for temporary manual boost. Stopping requests a fresh automatic evaluation without forcing a fan speed or resetting humidity recovery and protection state; monitor-only mode remains respected. An accepted stop does not imply a confirmed physical speed change.

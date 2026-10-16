@@ -2389,17 +2389,19 @@ public class HumidityMonitor {
     }
 
     private void cleanupOldData() {
-        // Retention period: 1 month
-        String sql = "DELETE FROM humidity_readings WHERE timestamp < datetime('now', '-1 month')";
-        
-        try (Connection conn = DriverManager.getConnection(DB_URL);
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            
-            int deleted = pstmt.executeUpdate();
+        try (Connection conn = DriverManager.getConnection(DB_URL)) {
+            int deleted = deleteExpiredReadings(conn);
             log("Cleanup: Removed " + deleted + " old records.");
-
         } catch (SQLException e) {
             logError("Cleanup error: " + e.getMessage());
+        }
+    }
+
+    // 13 months: a full heating season plus overlap for year-on-year comparison (~1.1M rows at 30 s).
+    static int deleteExpiredReadings(Connection connection) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "DELETE FROM humidity_readings WHERE timestamp < datetime('now', '-13 months')")) {
+            return statement.executeUpdate();
         }
     }
 

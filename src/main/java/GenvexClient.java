@@ -113,6 +113,28 @@ public class GenvexClient {
         return value == 0xFFFF ? -1 : value;
     }
 
+    /** Raw reply to one DATAPOINT_READ, or null when the unit did not answer. */
+    byte[] readDatapointResponse(int addr, int retries) throws IOException, InterruptedException {
+        if (!connected) throw new IOException("Not connected");
+        if (retries < 1) throw new IllegalArgumentException("Retries must be positive");
+        return sendPacketAndWaitForResponse(sequenceId++, buildDatapointReadCommand(addr), retries);
+    }
+
+    /** Raw reply to one SETPOINT_READ (0x2a), or null when the unit did not answer. */
+    byte[] readSetpointResponse(int addr, int retries) throws IOException, InterruptedException {
+        if (!connected) throw new IOException("Not connected");
+        if (retries < 1) throw new IllegalArgumentException("Retries must be positive");
+        return sendPacketAndWaitForResponse(sequenceId++, buildSetpointReadCommand(addr), retries);
+    }
+
+    /** Setpoint replies carry one byte before the 2-byte count, so the first value sits at offset 3. */
+    static int decodeSetpointValue(byte[] response) {
+        if (response == null || response.length < 5) {
+            return -1;
+        }
+        return ((response[3] & 0xFF) << 8) | (response[4] & 0xFF);
+    }
+
     public void setFanSpeed(int speed) throws IOException, InterruptedException {
         if (!connected) throw new IOException("Not connected");
         if (speed < 0 || speed > 4) throw new IllegalArgumentException("Speed must be 0-4");
@@ -277,6 +299,17 @@ public class GenvexClient {
         cmdBuffer.putShort((short) 1);
         cmdBuffer.put((byte) 0);
         cmdBuffer.putInt(address);
+        cmdBuffer.put((byte) 1);
+        return cmdBuffer.array();
+    }
+
+    // Setpoint reads take a 2-byte address; datapoint reads and setpoint writes take 4 bytes.
+    static byte[] buildSetpointReadCommand(int address) {
+        ByteBuffer cmdBuffer = ByteBuffer.allocate(10);
+        cmdBuffer.putInt(0x0000002a);
+        cmdBuffer.putShort((short) 1);
+        cmdBuffer.put((byte) 0);
+        cmdBuffer.putShort((short) address);
         cmdBuffer.put((byte) 1);
         return cmdBuffer.array();
     }

@@ -1,3 +1,4 @@
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -86,6 +87,22 @@ class GenvexClientResponseTest {
     void decodesUnavailableDatapointSentinel() {
         assertEquals(-1, GenvexClient.decodeDatapointValue(new byte[] {0, 0, (byte) 0xFF, (byte) 0xFF}));
         assertEquals(529, GenvexClient.decodeDatapointValue(new byte[] {0, 0, 0x02, 0x11}));
+    }
+
+    @Test
+    void buildsSetpointReadWithTwoByteAddress() {
+        assertArrayEquals(new byte[] {0, 0, 0, 0x2a, 0, 1, 0, 0, 7, 1},
+                GenvexClient.buildSetpointReadCommand(7));
+        assertArrayEquals(new byte[] {0, 0, 0, 0x2a, 0, 1, 0, 0, 100, 1},
+                GenvexClient.buildSetpointReadCommand(100));
+    }
+
+    @Test
+    void decodesSetpointValueAfterLeadingByteAndCount() {
+        assertEquals(2, GenvexClient.decodeSetpointValue(new byte[] {0, 0, 1, 0, 2}));
+        assertEquals(0xFFFF, GenvexClient.decodeSetpointValue(new byte[] {0, 0, 1, (byte) 0xFF, (byte) 0xFF}));
+        assertEquals(-1, GenvexClient.decodeSetpointValue(new byte[] {0, 0, 1, 0}));
+        assertEquals(-1, GenvexClient.decodeSetpointValue(null));
     }
 
     private static byte[] response(int sequence) {
