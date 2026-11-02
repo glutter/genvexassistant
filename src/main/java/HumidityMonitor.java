@@ -17,8 +17,10 @@ import java.util.Locale;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.sun.net.httpserver.HttpServer;
@@ -34,6 +36,8 @@ public class HumidityMonitor {
     private static final HostingConfig HOSTING = HostingConfig.fromEnvironment(System.getenv());
     private static final String DB_PATH = HOSTING.dbPath();
     private static final String DB_URL = "jdbc:sqlite:" + DB_PATH;
+    private static final String VERSION = HealthReport.readVersion();
+    private static final int HTTP_WORKER_THREADS = 4;
 
     private static final int MAX_MANUAL_OVERRIDE_MINUTES = 24 * 60;
 
@@ -45,6 +49,10 @@ public class HumidityMonitor {
     private final AtomicBoolean homeAssistantPublishRunning = new AtomicBoolean();
     private final AtomicBoolean restartInProgress = new AtomicBoolean();
     private final String sessionId = java.util.UUID.randomUUID().toString().substring(0, 6);
+    // Read by /healthz without clientLock, which a long device poll can hold for a while.
+    private final long startedAtMillis = System.currentTimeMillis();
+    private volatile long lastPollAttemptMillis = 0;
+    private volatile boolean databaseStartFailed = false;
 
     // Configuration
     private static final int POLL_INTERVAL = Integer.parseInt(System.getenv().getOrDefault("POLL_INTERVAL", "30"));
@@ -142,7 +150,7 @@ public class HumidityMonitor {
     private boolean setpointReadbackUnavailableLogged = false;
     private boolean setpointReadbackAvailable = false;
     private boolean zeroSetpointReadbackLogged = false;
-    private int dbErrorCount = 0;
+    private volatile int dbErrorCount = 0;
     // Manual override (Udluftning)
     private volatile boolean manualOverrideActive = false;
     private volatile long manualOverrideEndTime = 0;
@@ -158,8 +166,8 @@ public class HumidityMonitor {
     private long lastSunStateCheck = 0;
     private boolean lastSunBelowHorizon = false;
     private boolean sunStateAvailable = false;
-    private ControlTelemetry lastControlTelemetry;
-    private boolean lastPollFailed;
+    private volatile ControlTelemetry lastControlTelemetry;
+    private volatile boolean lastPollFailed;
     private final MoistureTrend moistureTrend = new MoistureTrend(staleAfterSeconds(POLL_INTERVAL) * 1000L);
 
     public HumidityMonitor(String ip, String email) {
@@ -176,7 +184,7 @@ public class HumidityMonitor {
                 HUMIDITY_HIGH_THRESHOLD);
         validateHeatLossConfiguration(HEAT_LOSS_CONFIG);
 
-        log(HOSTING.describe());
+        log(HOSTING.describe() + ", version=" + VERSION);
 
         // Initialize Database
         initializeDatabase();
@@ -309,6 +317,7 @@ public class HumidityMonitor {
             log("Database initialized at " + DB_PATH);
         } catch (SQLException e) {
             logError("Failed to initialize database: " + e.getMessage());
+            databaseStartFailed = true;
             if (HOSTING.stopOnStartupFailure()) {
                 throw new IllegalStateException("Database unavailable at " + DB_PATH, e);
             }
@@ -419,7 +428,9 @@ public class HumidityMonitor {
             server.createContext("/api/fan/static", new StaticRpmApiHandler());
             server.createContext("/api/system/restart", new RestartApiHandler());
             server.createContext("/api/system/mode", new SystemModeHandler());
-            server.setExecutor(null);
+            server.createContext("/healthz", new HealthApiHandler());
+            // A pool, so a handler waiting on clientLock during a device poll cannot starve the others.
+            server.setExecutor(Executors.newFixedThreadPool(HTTP_WORKER_THREADS, daemonThreads("http-worker")));
             server.start();
             log("Web Dashboard started on port " + HOSTING.webPort());
         } catch (IOException e) {
@@ -428,6 +439,54 @@ public class HumidityMonitor {
                 throw new IllegalStateException("Web server could not bind " + HOSTING.webBind() + ":"
                         + HOSTING.webPort(), e);
             }
+        }
+    }
+
+    private static ThreadFactory daemonThreads(String prefix) {
+        AtomicInteger counter = new AtomicInteger();
+        return task -> {
+            Thread thread = new Thread(task, prefix + "-" + counter.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        };
+    }
+
+    HealthReport healthReport(long now) {
+        ControlTelemetry telemetry = lastControlTelemetry;
+        boolean hasSample = telemetry != null;
+        String device = HealthReport.deviceStatus(lastPollFailed,
+                hasSample ? now - telemetry.sampledAt().toEpochMilli() : 0, hasSample,
+                staleAfterSeconds(POLL_INTERVAL) * 1000L);
+        return HealthReport.evaluate(now, startedAtMillis, lastPollAttemptMillis,
+                HealthReport.maxPollAgeMillis(POLL_INTERVAL), databaseStartFailed, dbErrorCount, false, device,
+                VERSION, HOSTING.profile().label());
+    }
+
+    class HealthApiHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange t) throws IOException {
+            if (!"/healthz".equals(t.getRequestURI().getPath())) {
+                sendError(t, 404, "Not Found");
+                return;
+            }
+            boolean head = "HEAD".equalsIgnoreCase(t.getRequestMethod());
+            if (!head && !"GET".equalsIgnoreCase(t.getRequestMethod())) {
+                sendError(t, 405, "Method Not Allowed");
+                return;
+            }
+            boolean requireDevice = "require=device".equals(t.getRequestURI().getQuery());
+            HealthReport report = healthReport(System.currentTimeMillis());
+            int status = report.healthy(requireDevice) ? 200 : 503;
+            byte[] body = report.json(requireDevice).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            t.getResponseHeaders().add("Content-Type", "application/json");
+            t.getResponseHeaders().add("Cache-Control", "no-store");
+            if (head) {
+                t.sendResponseHeaders(status, -1);
+                t.close();
+                return;
+            }
+            t.sendResponseHeaders(status, body.length);
+            try (OutputStream os = t.getResponseBody()) { os.write(body); }
         }
     }
 
@@ -893,7 +952,18 @@ public class HumidityMonitor {
         }
     }
 
-    private void pollAndStore() {
+    void pollAndStore() {
+        lastPollAttemptMillis = System.currentTimeMillis();
+        try {
+            runPollCycle();
+        } catch (RuntimeException | Error e) {
+            // An escaping exception silently cancels the fixed-delay schedule and leaves a live process that polls nothing.
+            logError("Poll cycle failed: " + e);
+            e.printStackTrace();
+        }
+    }
+
+    void runPollCycle() {
         refreshSunStateIfNeeded();
         HistoricalBaselines baselines = loadHistoricalBaselines(Instant.now());
         PollResult result;
