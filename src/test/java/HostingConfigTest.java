@@ -188,9 +188,9 @@ class HostingConfigTest {
         assertTrue(from(Map.of()).allowedHosts().isEmpty());
         assertTrue(from(Map.of("SUPERVISOR_TOKEN", "t", "GENVEX_ALLOWED_HOSTS", " ")).allowedHosts().isEmpty());
 
-        HostingConfig config = from(Map.of("GENVEX_ALLOWED_HOSTS", " Genvex.Example.org:443, ,192.168.50.233"));
+        HostingConfig config = from(Map.of("GENVEX_ALLOWED_HOSTS", " Genvex.Example.org:443, ,192.0.2.50"));
 
-        assertEquals(java.util.Set.of("genvex.example.org", "192.168.50.233"), config.allowedHosts());
+        assertEquals(java.util.Set.of("genvex.example.org", "192.0.2.50"), config.allowedHosts());
     }
 
     @Test

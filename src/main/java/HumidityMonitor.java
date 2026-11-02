@@ -478,10 +478,14 @@ public class HumidityMonitor {
     // Filters belong to a context, so the Host/Origin guard has to be added to each one.
     private static void addContext(HttpServer server, String path, HttpHandler handler) {
         com.sun.net.httpserver.HttpContext context = server.createContext(path, handler);
-        // The add-on keeps 1.82 behaviour unless GENVEX_ALLOWED_HOSTS is set; native and local always refuse cross-site writes.
-        if (HOSTING.profile() != HostingConfig.Profile.ADDON || !HOSTING.allowedHosts().isEmpty()) {
+        if (installsGuard(HOSTING)) {
             context.getFilters().add(new RequestGuard(HOSTING.allowedHosts()));
         }
+    }
+
+    /** The add-on keeps 1.82 behaviour unless GENVEX_ALLOWED_HOSTS is set; native and local always refuse cross-site writes. */
+    static boolean installsGuard(HostingConfig config) {
+        return config.profile() != HostingConfig.Profile.ADDON || !config.allowedHosts().isEmpty();
     }
 
     private static ThreadFactory daemonThreads(String prefix) {

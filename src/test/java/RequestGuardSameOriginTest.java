@@ -84,7 +84,7 @@ class RequestGuardSameOriginTest {
         IllegalArgumentException refused = assertThrows(IllegalArgumentException.class, () -> HostingConfig.fromEnvironment(env));
         assertTrue(refused.getMessage().contains("GENVEX_ALLOW_REMOTE_BIND"), refused.getMessage());
         assertThrows(IllegalArgumentException.class, () -> HostingConfig.fromEnvironment(
-                Map.of("GENVEX_HOSTING", "native", "GENVEX_DB_PATH", "/tmp/g.db", "GENVEX_WEB_BIND", "192.168.50.233")));
+                Map.of("GENVEX_HOSTING", "native", "GENVEX_DB_PATH", "/tmp/g.db", "GENVEX_WEB_BIND", "192.0.2.50")));
 
         assertEquals("0.0.0.0", HostingConfig.fromEnvironment(Map.of("GENVEX_HOSTING", "native", "GENVEX_DB_PATH", "/tmp/g.db",
                 "GENVEX_WEB_BIND", "0.0.0.0", "GENVEX_ALLOW_REMOTE_BIND", "true")).webBind());
@@ -106,6 +106,16 @@ class RequestGuardSameOriginTest {
                 Map.of("GENVEX_HOSTING", "native", "GENVEX_DB_PATH", "/var/lib/g/genvex.db?journal_mode=OFF")));
         assertThrows(IllegalArgumentException.class, () -> HostingConfig.fromEnvironment(
                 Map.of("GENVEX_HOSTING", "local", "GENVEX_DB_PATH", "x.db?mode=ro")));
+    }
+
+    @Test
+    void theGuardIsInstalledForNativeAndLocalAndForTheAddonOnlyWithAHostList() {
+        assertTrue(HumidityMonitor.installsGuard(HostingConfig.fromEnvironment(Map.of())));
+        assertTrue(HumidityMonitor.installsGuard(HostingConfig.fromEnvironment(
+                Map.of("GENVEX_HOSTING", "native", "GENVEX_DB_PATH", "/tmp/g.db"))));
+        assertFalse(HumidityMonitor.installsGuard(HostingConfig.fromEnvironment(Map.of("SUPERVISOR_TOKEN", "t"))));
+        assertTrue(HumidityMonitor.installsGuard(HostingConfig.fromEnvironment(
+                Map.of("SUPERVISOR_TOKEN", "t", "GENVEX_ALLOWED_HOSTS", "genvex.example.org"))));
     }
 
     @Test
