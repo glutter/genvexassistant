@@ -1,8 +1,10 @@
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Where the service runs and what it may talk to, resolved once from the environment.
@@ -10,7 +12,7 @@ import java.util.Map;
  * and for development.
  */
 record HostingConfig(Profile profile, String dbPath, String webBind, int webPort, HaEndpoint homeAssistant,
-        Coordinates location) {
+        Coordinates location, Set<String> allowedHosts) {
 
     enum Profile {
         ADDON, NATIVE, LOCAL;
@@ -55,7 +57,27 @@ record HostingConfig(Profile profile, String dbPath, String webBind, int webPort
                 ? new HaEndpoint(SUPERVISOR_CORE_URL, env.get("SUPERVISOR_TOKEN")) : null;
 
         return new HostingConfig(profile, dbPath, bind, port, homeAssistant,
-                parseLocation(env.get("GENVEX_LATITUDE"), env.get("GENVEX_LONGITUDE")));
+                parseLocation(env.get("GENVEX_LATITUDE"), env.get("GENVEX_LONGITUDE")),
+                parseAllowedHosts(env.get("GENVEX_ALLOWED_HOSTS")));
+    }
+
+    /** Comma-separated host names; empty or unset switches the Host/Origin check off. */
+    private static Set<String> parseAllowedHosts(String value) {
+        if (value == null || value.isBlank()) {
+            return Set.of();
+        }
+        Set<String> hosts = new LinkedHashSet<>();
+        for (String entry : value.split(",")) {
+            if (entry.isBlank()) {
+                continue;
+            }
+            String host = entry.contains("/") ? null : RequestGuard.hostOf(entry);
+            if (host == null) {
+                throw new IllegalArgumentException("GENVEX_ALLOWED_HOSTS must be comma-separated host names");
+            }
+            hosts.add(host);
+        }
+        return Set.copyOf(hosts);
     }
 
     private static Coordinates parseLocation(String latitude, String longitude) {

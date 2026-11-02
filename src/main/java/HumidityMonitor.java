@@ -441,16 +441,19 @@ public class HumidityMonitor {
     private void startWebServer() {
         try {
             HttpServer server = HttpServer.create(HOSTING.webAddress(), 0);
-            server.createContext("/", new StaticFileHandler());
-            server.createContext("/api/history", new HistoryApiHandler());
-            server.createContext("/api/summary", new SummaryApiHandler());
-            server.createContext("/api/live", new LiveApiHandler());
-            server.createContext("/api/fan/udluftning", new UdluftningApiHandler());
-            server.createContext("/api/fan/udluftning/stop", new StopUdluftningApiHandler());
-            server.createContext("/api/fan/static", new StaticRpmApiHandler());
-            server.createContext("/api/system/restart", new RestartApiHandler());
-            server.createContext("/api/system/mode", new SystemModeHandler());
-            server.createContext("/healthz", new HealthApiHandler());
+            addContext(server, "/", new StaticFileHandler());
+            addContext(server, "/api/history", new HistoryApiHandler());
+            addContext(server, "/api/summary", new SummaryApiHandler());
+            addContext(server, "/api/live", new LiveApiHandler());
+            addContext(server, "/api/fan/udluftning", new UdluftningApiHandler());
+            addContext(server, "/api/fan/udluftning/stop", new StopUdluftningApiHandler());
+            addContext(server, "/api/fan/static", new StaticRpmApiHandler());
+            addContext(server, "/api/system/restart", new RestartApiHandler());
+            addContext(server, "/api/system/mode", new SystemModeHandler());
+            addContext(server, "/healthz", new HealthApiHandler());
+            if (!HOSTING.allowedHosts().isEmpty()) {
+                log("Host/Origin check on for: " + String.join(", ", new java.util.TreeSet<>(HOSTING.allowedHosts())));
+            }
             // A pool, so a handler waiting on clientLock during a device poll cannot starve the others.
             ExecutorService pool = Executors.newFixedThreadPool(HTTP_WORKER_THREADS, daemonThreads("http-worker"));
             server.setExecutor(pool);
@@ -464,6 +467,14 @@ public class HumidityMonitor {
                 throw new IllegalStateException("Web server could not bind " + HOSTING.webBind() + ":"
                         + HOSTING.webPort(), e);
             }
+        }
+    }
+
+    // Filters belong to a context, so the Host/Origin guard has to be added to each one.
+    private static void addContext(HttpServer server, String path, HttpHandler handler) {
+        com.sun.net.httpserver.HttpContext context = server.createContext(path, handler);
+        if (!HOSTING.allowedHosts().isEmpty()) {
+            context.getFilters().add(new RequestGuard(HOSTING.allowedHosts()));
         }
     }
 
@@ -688,10 +699,10 @@ public class HumidityMonitor {
                 path = "/index.html";
             }
             
-            // Simple security check to prevent directory traversal
-            if (path.contains("..")) {
-                String response = "403 Forbidden";
-                t.sendResponseHeaders(403, response.length());
+            // The classpath also holds .class files, pom.xml and the sqlite native library: serve the page only.
+            if (!path.equals("/index.html")) {
+                String response = "404 Not Found";
+                t.sendResponseHeaders(404, response.length());
                 try (OutputStream os = t.getResponseBody()) {
                     os.write(response.getBytes());
                 }

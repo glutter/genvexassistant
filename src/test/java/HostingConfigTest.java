@@ -182,4 +182,20 @@ class HostingConfigTest {
         assertThrows(IllegalArgumentException.class,
                 () -> from(Map.of("GENVEX_LATITUDE", "NaN", "GENVEX_LONGITUDE", "12")));
     }
+
+    @Test
+    void allowedHostsAreOffByDefaultAndNormalisedWhenSet() {
+        assertTrue(from(Map.of()).allowedHosts().isEmpty());
+        assertTrue(from(Map.of("SUPERVISOR_TOKEN", "t", "GENVEX_ALLOWED_HOSTS", " ")).allowedHosts().isEmpty());
+
+        HostingConfig config = from(Map.of("GENVEX_ALLOWED_HOSTS", " Genvex.Example.org:443, ,192.168.50.233"));
+
+        assertEquals(java.util.Set.of("genvex.example.org", "192.168.50.233"), config.allowedHosts());
+    }
+
+    @Test
+    void rejectsAllowedHostsThatAreUrlsOrPaths() {
+        assertThrows(IllegalArgumentException.class, () -> from(Map.of("GENVEX_ALLOWED_HOSTS", "https://x.example.org")));
+        assertThrows(IllegalArgumentException.class, () -> from(Map.of("GENVEX_ALLOWED_HOSTS", "x.example.org/path")));
+    }
 }
