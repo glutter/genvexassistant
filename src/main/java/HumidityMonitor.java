@@ -7,6 +7,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -42,6 +43,9 @@ public class HumidityMonitor {
     private static final int MAX_MANUAL_OVERRIDE_MINUTES = 24 * 60;
 
     private final GenvexClient client;
+    private final Clock clock;
+    private final HostingConfig.Coordinates location;
+    private String loggedSunSource;
     private final Object clientLock = new Object();
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
     private final ExecutorService homeAssistantPublisher = Executors.newSingleThreadExecutor();
@@ -176,7 +180,14 @@ public class HumidityMonitor {
     private final MoistureTrend moistureTrend = new MoistureTrend(staleAfterSeconds(POLL_INTERVAL) * 1000L);
 
     public HumidityMonitor(String ip, String email) {
+        this(ip, email, Clock.systemDefaultZone(), HOSTING.location());
+    }
+
+    // The clock and location are injectable so tests can pin the time of day and the sun.
+    HumidityMonitor(String ip, String email, Clock clock, HostingConfig.Coordinates location) {
         this.client = new GenvexClient(ip, email);
+        this.clock = clock;
+        this.location = location;
     }
 
     public void start() {
@@ -190,6 +201,10 @@ public class HumidityMonitor {
         validateHeatLossConfiguration(HEAT_LOSS_CONFIG);
 
         log(HOSTING.describe() + ", version=" + VERSION);
+        if (HOSTING.profile() == HostingConfig.Profile.NATIVE && location == null && EVENING_COOLING_ENABLED) {
+            logError("GENVEX_LATITUDE/GENVEX_LONGITUDE are not set: evening cooling starts at the fixed "
+                    + COOLING_FALLBACK_START + " window, which is hours before sunset in summer.");
+        }
         Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown, "shutdown-hook"));
 
         // Initialize Database
@@ -1432,7 +1447,7 @@ public class HumidityMonitor {
 
         int targetSpeed = NORMAL_SPEED;
         String reason = "Normal";
-        LocalTime now = LocalTime.now();
+        LocalTime now = LocalTime.now(clock);
         long nowMillis = System.currentTimeMillis();
         boolean isNightTime = isNight(now);
         boolean automaticControl = true;
@@ -1910,7 +1925,7 @@ public class HumidityMonitor {
             return 0;
         }
 
-        long currentTime = System.currentTimeMillis();
+        long currentTime = clock.millis();
         boolean stalled = eveningCoolingActive && EveningCoolingPolicy.hasStalled(
             coolingBaselineIndoorTemp, tempExtract, currentTime - coolingBaselineTime,
             COOLING_ESCALATION_MS, COOLING_PROGRESS_C);
@@ -2004,12 +2019,26 @@ public class HumidityMonitor {
         sunStateAvailable = false;
     }
 
-    private boolean isAfterSunset(LocalTime now) {
+    /** Sun source in priority order: Home Assistant's sun.sun, the local calculation, then the fixed window. */
+    boolean isAfterSunset(LocalTime now) {
         if (HOSTING.homeAssistant() != null && sunStateAvailable) {
+            logSunSource("home-assistant");
             return lastSunBelowHorizon;
         }
+        if (location != null) {
+            logSunSource("local");
+            return SolarPosition.isBelowHorizon(clock.instant(), location.latitude(), location.longitude());
+        }
 
+        logSunSource("window");
         return isCoolingFallbackWindow(now, COOLING_FALLBACK_START, NIGHT_END);
+    }
+
+    private void logSunSource(String source) {
+        if (!source.equals(loggedSunSource)) {
+            loggedSunSource = source;
+            log("Sunset source: " + source);
+        }
     }
 
     static boolean isCoolingFallbackWindow(LocalTime time, LocalTime start, LocalTime end) {

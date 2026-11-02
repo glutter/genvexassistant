@@ -1,4 +1,6 @@
 import java.net.InetSocketAddress;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -7,7 +9,8 @@ import java.util.Map;
  * The add-on profile is byte-for-byte the behaviour of v1.82; the other two exist for a systemd install
  * and for development.
  */
-record HostingConfig(Profile profile, String dbPath, String webBind, int webPort, HaEndpoint homeAssistant) {
+record HostingConfig(Profile profile, String dbPath, String webBind, int webPort, HaEndpoint homeAssistant,
+        Coordinates location) {
 
     enum Profile {
         ADDON, NATIVE, LOCAL;
@@ -24,6 +27,9 @@ record HostingConfig(Profile profile, String dbPath, String webBind, int webPort
             return "HaEndpoint[" + baseUrl + "]";
         }
     }
+
+    /** Where sunset is computed when Home Assistant cannot say; absent means the fixed cooling window is used. */
+    record Coordinates(double latitude, double longitude) {}
 
     static final String ADDON_DB_PATH = "/data/genvex.db";
     static final String LOCAL_DB_PATH = "genvex.db";
@@ -48,7 +54,32 @@ record HostingConfig(Profile profile, String dbPath, String webBind, int webPort
         HaEndpoint homeAssistant = profile == Profile.ADDON && supervisorPresent
                 ? new HaEndpoint(SUPERVISOR_CORE_URL, env.get("SUPERVISOR_TOKEN")) : null;
 
-        return new HostingConfig(profile, dbPath, bind, port, homeAssistant);
+        return new HostingConfig(profile, dbPath, bind, port, homeAssistant,
+                parseLocation(env.get("GENVEX_LATITUDE"), env.get("GENVEX_LONGITUDE")));
+    }
+
+    private static Coordinates parseLocation(String latitude, String longitude) {
+        boolean hasLatitude = latitude != null && !latitude.isBlank();
+        boolean hasLongitude = longitude != null && !longitude.isBlank();
+        if (!hasLatitude && !hasLongitude) {
+            return null;
+        }
+        if (hasLatitude != hasLongitude) {
+            throw new IllegalArgumentException("GENVEX_LATITUDE and GENVEX_LONGITUDE must be set together");
+        }
+        return new Coordinates(parseDegrees("GENVEX_LATITUDE", latitude, 90), parseDegrees("GENVEX_LONGITUDE", longitude, 180));
+    }
+
+    private static double parseDegrees(String name, String value, double limit) {
+        try {
+            double degrees = Double.parseDouble(value.trim());
+            if (Double.isFinite(degrees) && Math.abs(degrees) <= limit) {
+                return degrees;
+            }
+        } catch (NumberFormatException ignored) {
+            // Falls through to the shared message below.
+        }
+        throw new IllegalArgumentException(name + " must be a number from -" + (int) limit + " to " + (int) limit);
     }
 
     static Profile selectProfile(String requested, boolean supervisorPresent) {
@@ -108,6 +139,20 @@ record HostingConfig(Profile profile, String dbPath, String webBind, int webPort
 
     String describe() {
         return "Hosting profile: " + profile.label() + ", db=" + dbPath + ", web=" + webBind + ":" + webPort
-                + ", home-assistant=" + (homeAssistant == null ? "off" : "on");
+                + ", home-assistant=" + (homeAssistant == null ? "off" : "on") + ", sun=" + sunDescription();
+    }
+
+    /** Sources of the sunset time in priority order; the fixed cooling window is the last resort. */
+    String sunDescription() {
+        List<String> sources = new ArrayList<>();
+        if (homeAssistant != null) sources.add("home-assistant");
+        if (location != null) {
+            sources.add(String.format(Locale.ROOT, "local(%s,%s)", degrees(location.latitude()), degrees(location.longitude())));
+        }
+        return sources.isEmpty() ? "window" : String.join("+", sources);
+    }
+
+    private static String degrees(double value) {
+        return new java.math.BigDecimal(value).setScale(3, java.math.RoundingMode.HALF_UP).stripTrailingZeros().toPlainString();
     }
 }

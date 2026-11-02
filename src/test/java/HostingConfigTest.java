@@ -143,8 +143,43 @@ class HostingConfigTest {
     void describesTheProfileWithoutLeakingTheToken() {
         HostingConfig config = from(Map.of("SUPERVISOR_TOKEN", "s3cret"));
 
-        assertEquals("Hosting profile: addon, db=/data/genvex.db, web=0.0.0.0:8081, home-assistant=on",
-                config.describe());
+        assertEquals("Hosting profile: addon, db=/data/genvex.db, web=0.0.0.0:8081, home-assistant=on, "
+                + "sun=home-assistant", config.describe());
         assertFalse(config.toString().contains("s3cret"));
+    }
+
+    @Test
+    void locationIsOptionalAndDescribedAsTheLocalSunSource() {
+        assertNull(from(Map.of()).location());
+        assertEquals("window", from(Map.of()).sunDescription());
+
+        HostingConfig config = from(Map.of("GENVEX_HOSTING", "native", "GENVEX_DB_PATH", "/tmp/g.db",
+                "GENVEX_LATITUDE", "55.676", "GENVEX_LONGITUDE", " 12.568 "));
+
+        assertEquals(new HostingConfig.Coordinates(55.676, 12.568), config.location());
+        assertEquals("Hosting profile: native, db=/tmp/g.db, web=127.0.0.1:8081, home-assistant=off, "
+                + "sun=local(55.676,12.568)", config.describe());
+    }
+
+    @Test
+    void homeAssistantStaysFirstWhenCoordinatesAreAlsoGiven() {
+        HostingConfig config = from(Map.of("SUPERVISOR_TOKEN", "t", "GENVEX_LATITUDE", "56",
+                "GENVEX_LONGITUDE", "-10.5"));
+
+        assertEquals("home-assistant+local(56,-10.5)", config.sunDescription());
+    }
+
+    @Test
+    void rejectsHalfOrOutOfRangeCoordinates() {
+        assertThrows(IllegalArgumentException.class, () -> from(Map.of("GENVEX_LATITUDE", "55.6")));
+        assertThrows(IllegalArgumentException.class, () -> from(Map.of("GENVEX_LONGITUDE", "12.5")));
+        assertThrows(IllegalArgumentException.class,
+                () -> from(Map.of("GENVEX_LATITUDE", "91", "GENVEX_LONGITUDE", "12")));
+        assertThrows(IllegalArgumentException.class,
+                () -> from(Map.of("GENVEX_LATITUDE", "55", "GENVEX_LONGITUDE", "181")));
+        assertThrows(IllegalArgumentException.class,
+                () -> from(Map.of("GENVEX_LATITUDE", "north", "GENVEX_LONGITUDE", "12")));
+        assertThrows(IllegalArgumentException.class,
+                () -> from(Map.of("GENVEX_LATITUDE", "NaN", "GENVEX_LONGITUDE", "12")));
     }
 }
