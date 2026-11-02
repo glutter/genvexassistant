@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.83
+
+- Run outside Home Assistant. A hosting profile (`GENVEX_HOSTING=addon|native|local`, auto-detected from `SUPERVISOR_TOKEN`) selects the database path, web bind address and port, and whether Home Assistant sensors are published. With no new settings the add-on behaves as in 1.82. Native hosting binds `127.0.0.1`, reads `GENVEX_DB_PATH` or `STATE_DIRECTORY`, and exits with code 1 when the web server cannot bind or the database cannot start, instead of running on without them. The profile is logged once at startup. See `native/genvex.env.example` and the README.
+- Add `GET`/`HEAD /healthz`: 200 while the web server, database and poll loop work, 503 otherwise or while shutting down, independent of whether the unit answers (`device` reports `ok`, `stale`, `failed` or `awaiting`; `?require=device` also requires `ok`). The web server now has a pool of four threads, so a request waiting for a device poll no longer blocks the others. An exception in one poll no longer silently ends polling.
+- Shut down cleanly on `SIGTERM`: health turns 503, intake stops, a running maintenance restart is allowed to finish on speed 1, and the control state is saved. Nothing new is written to the unit.
+- Compute sunset locally from `GENVEX_LATITUDE`/`GENVEX_LONGITUDE` when Home Assistant's `sun.sun` is unavailable, instead of the fixed 18:00 window, which started evening cooling hours before sunset in summer. `sun.sun` still takes precedence in the add-on.
+- Serve only the dashboard page (`/` and `/index.html`) instead of every file on the classpath, which exposed class files, `pom.xml` and the SQLite library. Add an optional `GENVEX_ALLOWED_HOSTS` check of the `Host` and `Origin` headers, off by default. Pin Chart.js to 4.6.1.
+- Add a test that keeps the option defaults in `config.json`, `run.sh`, `HumidityMonitor` and the native env example identical.
+
 ## 1.82
 
 - Keep 13 months of history instead of one month (about 1.1 million rows per year at the default 30-second poll), so a full heating season can be analysed. Rows already removed by earlier versions cannot be recovered. Fan control is unchanged.
