@@ -35,7 +35,7 @@ fi
 
 # 4. Git operations
 echo "Staging files for commit..."
-git add ADDRESS_MAP.md README.md repository.json publish.sh pom.xml src/ \
+git add ADDRESS_MAP.md README.md repository.json publish.sh pom.xml src/ native/ \
     demo_image.png "Screenshot 2026-08-17 at 22.28.32.png" \
     ha_addon/app.jar ha_addon/config.json ha_addon/Dockerfile \
     ha_addon/run.sh ha_addon/README.md ha_addon/CHANGELOG.md
