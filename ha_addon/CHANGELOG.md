@@ -8,6 +8,12 @@
 - Compute sunset locally from `GENVEX_LATITUDE`/`GENVEX_LONGITUDE` when Home Assistant's `sun.sun` is unavailable, instead of the fixed 18:00 window, which started evening cooling hours before sunset in summer. `sun.sun` still takes precedence in the add-on.
 - Serve only the dashboard page (`/` and `/index.html`) instead of every file on the classpath, which exposed class files, `pom.xml` and the SQLite library. Add an optional `GENVEX_ALLOWED_HOSTS` check of the `Host` and `Origin` headers, off by default. Pin Chart.js to 4.6.1.
 - Add a test that keeps the option defaults in `config.json`, `run.sh`, `HumidityMonitor` and the native env example identical.
+- Shutdown: a fan or restart request that was already waiting behind a poll is refused (503) once SIGTERM has arrived, a poll that was queued behind such a request no longer reconnects and writes the fan, and the web server stays up until the end so `/healthz` really answers 503 during shutdown. `/healthz?require=device` works with other query parameters, and a wall clock stepped backwards no longer hides a dead poll loop.
+- Request bodies over 8 KB are refused with 413 (a 48 MB body used to kill the JVM with an out-of-memory error), and the system-mode request body is no longer written to the log, where a newline could forge log lines. The `until` in the manual boost answer is read under the lock that wrote it.
+- `/api/history` is streamed instead of built in memory: a month where the controller changed its mind on every sample (about 33 MB) used to need more than the 128 MB heap. The JSON is byte-identical.
+- Native and local profiles only (the add-on is unchanged): `Origin` must match `Host` for a `POST` and cross-site requests are refused, a non-loopback `GENVEX_WEB_BIND` is refused in `native`, `GENVEX_DB_PATH` may not contain `?`, slow requests are cut after 10 s (headers) and 60 s (response), the page is sent with anti-framing headers, and the page and `/api/history` are gzipped for clients that ask (about 17-22 times smaller).
+- The dashboard stops its 30-second refresh while the tab is hidden and refreshes once when it is shown again.
+- `databaseStartFailed` is cleared by the first successful write, so `/healthz` recovers after a transient start-up error.
 
 ## 1.82
 

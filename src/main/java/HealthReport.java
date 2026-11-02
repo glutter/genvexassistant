@@ -14,6 +14,7 @@ record HealthReport(List<String> problems, String device, long lastPollAgeSecond
         String version, String profile) {
 
     static final int DATABASE_ERROR_LIMIT = 5;
+    static final long CLOCK_STEP_TOLERANCE_MILLIS = 60_000;
     static final String VERSION_RESOURCE = "/META-INF/maven/com.genvex/genvex-integration/pom.properties";
 
     static HealthReport evaluate(long nowMillis, long startedAtMillis, long lastPollAttemptMillis,
@@ -25,7 +26,11 @@ record HealthReport(List<String> problems, String device, long lastPollAgeSecond
         if (databaseErrors >= DATABASE_ERROR_LIMIT) problems.add("database_errors");
         // Before the first poll the process start is the reference, so a slow first connection is not a stall.
         long reference = lastPollAttemptMillis > 0 ? lastPollAttemptMillis : startedAtMillis;
-        if (nowMillis - reference > maxPollAgeMillis) problems.add("poll_loop_stalled");
+        // A wall clock stepped back would otherwise hide a dead loop for as long as the step; the next poll fixes it.
+        long sinceReference = nowMillis - reference;
+        if (sinceReference > maxPollAgeMillis || sinceReference < -CLOCK_STEP_TOLERANCE_MILLIS) {
+            problems.add("poll_loop_stalled");
+        }
         long pollAge = lastPollAttemptMillis > 0 ? Math.max(0, (nowMillis - lastPollAttemptMillis) / 1000) : -1;
         return new HealthReport(List.copyOf(problems), device, pollAge,
                 Math.max(0, (nowMillis - startedAtMillis) / 1000), version, profile);

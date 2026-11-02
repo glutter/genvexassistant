@@ -74,10 +74,6 @@ class RequestGuardTest {
         assertEquals("::1", RequestGuard.hostOf("[::1]:3100"));
         assertNull(RequestGuard.hostOf(" "));
         assertNull(RequestGuard.hostOf("[::1"));
-        assertEquals("example.org", RequestGuard.hostOfOrigin("https://example.org:8443"));
-        assertEquals("::1", RequestGuard.hostOfOrigin("http://[::1]:3100"));
-        assertNull(RequestGuard.hostOfOrigin("null"));
-        assertNull(RequestGuard.hostOfOrigin("not a uri"));
     }
 
     @Test

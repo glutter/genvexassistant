@@ -39,6 +39,7 @@ record HostingConfig(Profile profile, String dbPath, String webBind, int webPort
     private static final String ANY_ADDRESS = "0.0.0.0";
     private static final String LOOPBACK = "127.0.0.1";
     private static final String SUPERVISOR_CORE_URL = "http://supervisor/core";
+    static final String ALLOW_REMOTE_BIND = "GENVEX_ALLOW_REMOTE_BIND";
 
     static HostingConfig fromEnvironment(Map<String, String> env) {
         boolean supervisorPresent = env.get("SUPERVISOR_TOKEN") != null;
@@ -53,6 +54,14 @@ record HostingConfig(Profile profile, String dbPath, String webBind, int webPort
         String bind = profile == Profile.ADDON ? ANY_ADDRESS
                 : valueOrDefault(env.get("GENVEX_WEB_BIND"), profile == Profile.NATIVE ? LOOPBACK : ANY_ADDRESS);
         int port = profile == Profile.ADDON ? DEFAULT_WEB_PORT : parsePort(env.get("GENVEX_WEB_PORT"));
+        if (profile != Profile.ADDON && dbPath.contains("?")) {
+            // The path is appended to a jdbc:sqlite: URL, where '?' starts driver options such as journal_mode=OFF.
+            throw new IllegalArgumentException("GENVEX_DB_PATH must not contain '?'");
+        }
+        if (profile == Profile.NATIVE && !isLoopback(bind) && !"true".equalsIgnoreCase(valueOrDefault(env.get(ALLOW_REMOTE_BIND), ""))) {
+            throw new IllegalArgumentException("Native hosting binds loopback only: GENVEX_WEB_BIND=" + bind
+                    + " would expose an API without login. Set " + ALLOW_REMOTE_BIND + "=true to override");
+        }
         HaEndpoint homeAssistant = profile == Profile.ADDON && supervisorPresent
                 ? new HaEndpoint(SUPERVISOR_CORE_URL, env.get("SUPERVISOR_TOKEN")) : null;
 
@@ -143,6 +152,10 @@ record HostingConfig(Profile profile, String dbPath, String webBind, int webPort
             // Falls through to the shared message below.
         }
         throw new IllegalArgumentException("GENVEX_WEB_PORT must be an integer from 1 to 65535");
+    }
+
+    private static boolean isLoopback(String bind) {
+        return bind.equalsIgnoreCase("localhost") || bind.equals("::1") || bind.matches("127(\\.\\d{1,3}){3}");
     }
 
     private static String valueOrDefault(String value, String fallback) {

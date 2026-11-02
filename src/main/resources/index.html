@@ -1397,8 +1397,9 @@
         syncRangeControls();
         setChartView(chartView);
         fetchData();
-        // Auto refresh every 30s
-        setInterval(fetchData, 30000);
+        // Auto refresh every 30s while the tab is visible; a hidden tab refreshes once when it is shown again
+        setInterval(() => { if (!document.hidden) fetchData(); }, 30000);
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchData(); });
         setInterval(updateFreshness, 1000);
 
         async function triggerQuickBoost(minutes) {

@@ -56,7 +56,10 @@ The database path, bind address and port are fixed in the add-on because ingress
 - **JVM:** run with `-Djava.net.preferIPv4Stack=true`, as `run.sh` does.
 - **Health:** `GET` or `HEAD /healthz` answers 200 while the web server, database and poll loop work, and 503 otherwise or during shutdown. It does not depend on the ventilation unit answering; that is reported in `device` (`ok`, `stale`, `failed`, `awaiting`). `/healthz?require=device` also returns 503 unless `device` is `ok`.
 - **Shutdown:** `SIGTERM` ends the service within about 8 seconds with exit code 143. A running restart sequence is allowed to finish on speed 1; no new fan speed is written.
-- **Host check:** `GENVEX_ALLOWED_HOSTS` (comma-separated, optional) rejects other `Host` headers with 421 and other `Origin` headers on `POST` with 403. Loopback names are always allowed. The API has no login, so bind it to loopback and put access control in front of it.
+- **Cross-site writes:** in `native` and `local`, a `POST` is refused with 403 unless its `Origin` is the page's own host and port, and also when the browser marks it `Sec-Fetch-Site: cross-site` or `same-site`. Another web page in your browser, or another local app on a different port, therefore cannot change the fan speed. Callers without an `Origin` (curl, Husets stemme) are unaffected. The add-on does not get this check, so ingress behaves as in 1.82.
+- **Host check:** `GENVEX_ALLOWED_HOSTS` (comma-separated, optional) also rejects other `Host` headers with 421 (and applies the cross-site check in the add-on). Loopback names are always allowed. The API has no login, so keep it on loopback and put access control in front of it.
+- **Bind:** `native` refuses to start with a `GENVEX_WEB_BIND` that is not a loopback address, because the API has no login. `GENVEX_ALLOW_REMOTE_BIND=true` overrides that.
+- **Limits (not in the add-on):** request bodies over 8 KB get 413 (in every profile), headers must arrive within 10 s and a response must finish within 60 s so four stalled clients cannot take all four workers, the dashboard is sent with `X-Frame-Options: DENY`, and `/api/history` and the page are gzipped for clients that ask. `/api/history` is streamed, so a month with a control event on every sample (about 33 MB) no longer needs the 128 MB heap.
 
 ## Validation
 

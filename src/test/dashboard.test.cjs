@@ -48,8 +48,12 @@ function harness(options = {}) {
         elements.push(item);
         if (item.id) byId.set(item.id, item);
     }
+    const intervals = [];
     const document = {
         activeElement: null,
+        hidden: false,
+        listeners: {},
+        addEventListener(type, listener) { (this.listeners[type] ||= []).push(listener); },
         getElementById(id) {
             assert.ok(byId.has(id), 'Missing dashboard element: ' + id);
             return byId.get(id);
@@ -84,7 +88,7 @@ function harness(options = {}) {
         AbortController,
         Date: ClockDate,
         fetch: () => new Promise(() => {}),
-        setInterval: () => 0,
+        setInterval: (callback, milliseconds) => { intervals.push({ callback, milliseconds }); return 0; },
         setTimeout: () => 0,
         console
     });
@@ -93,6 +97,8 @@ function harness(options = {}) {
     new vm.Script(script, { filename: 'dashboard-inline.js' }).runInContext(context);
     return {
         context,
+        document,
+        intervals,
         get: id => document.getElementById(id),
         run: source => vm.runInContext(source, context),
         advance: milliseconds => { clock += milliseconds; },
@@ -589,4 +595,20 @@ test('summary response races discard old successes and failures', async () => {
     await staleFailure;
     assert.equal(dashboard.get('summary-upshifts').textContent, '6');
     assert.equal(dashboard.get('summary-status').textContent, '');
+});
+
+test('a hidden tab skips the 30 s refresh and catches up once when shown again', () => {
+    const urls = [];
+    const dashboard = harness({ fetch: url => { urls.push(url); return new Promise(() => {}); } });
+    const refresh = dashboard.intervals.find(interval => interval.milliseconds === 30000).callback;
+    const initial = urls.length;
+    assert.ok(initial >= 3);
+    dashboard.document.hidden = true;
+    refresh();
+    assert.equal(urls.length, initial);
+    dashboard.document.hidden = false;
+    dashboard.document.listeners.visibilitychange.forEach(listener => listener());
+    assert.equal(urls.length, initial + 3);
+    refresh();
+    assert.equal(urls.length, initial + 6);
 });

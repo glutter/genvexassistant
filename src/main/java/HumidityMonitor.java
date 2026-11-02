@@ -440,6 +440,11 @@ public class HumidityMonitor {
 
     private void startWebServer() {
         try {
+            if (HOSTING.profile() != HostingConfig.Profile.ADDON) {
+                // The JDK server never times a request out by itself: a client that stalls pins one of the 4 workers.
+                System.getProperties().putIfAbsent("sun.net.httpserver.maxReqTime", "10");
+                System.getProperties().putIfAbsent("sun.net.httpserver.maxRspTime", "60");
+            }
             HttpServer server = HttpServer.create(HOSTING.webAddress(), 0);
             addContext(server, "/", new StaticFileHandler());
             addContext(server, "/api/history", new HistoryApiHandler());
@@ -473,7 +478,8 @@ public class HumidityMonitor {
     // Filters belong to a context, so the Host/Origin guard has to be added to each one.
     private static void addContext(HttpServer server, String path, HttpHandler handler) {
         com.sun.net.httpserver.HttpContext context = server.createContext(path, handler);
-        if (!HOSTING.allowedHosts().isEmpty()) {
+        // The add-on keeps 1.82 behaviour unless GENVEX_ALLOWED_HOSTS is set; native and local always refuse cross-site writes.
+        if (HOSTING.profile() != HostingConfig.Profile.ADDON || !HOSTING.allowedHosts().isEmpty()) {
             context.getFilters().add(new RequestGuard(HOSTING.allowedHosts()));
         }
     }
@@ -485,6 +491,14 @@ public class HumidityMonitor {
             thread.setDaemon(true);
             return thread;
         };
+    }
+
+    static boolean asksForDevice(String query) {
+        if (query == null) return false;
+        for (String part : query.split("&")) {
+            if ("require=device".equals(part)) return true;
+        }
+        return false;
     }
 
     HealthReport healthReport(long now) {
@@ -510,7 +524,7 @@ public class HumidityMonitor {
                 sendError(t, 405, "Method Not Allowed");
                 return;
             }
-            boolean requireDevice = "require=device".equals(t.getRequestURI().getQuery());
+            boolean requireDevice = asksForDevice(t.getRequestURI().getQuery());
             HealthReport report = healthReport(System.currentTimeMillis());
             int status = report.healthy(requireDevice) ? 200 : 503;
             byte[] body = report.json(requireDevice).getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -524,6 +538,40 @@ public class HumidityMonitor {
             t.sendResponseHeaders(status, body.length);
             try (OutputStream os = t.getResponseBody()) { os.write(body); }
         }
+    }
+
+    private static final int MAX_REQUEST_BODY_BYTES = 8 * 1024;
+
+    /** Reads a small JSON body; null means a 413 was sent. readAllBytes() on a 48 MB body exhausts the 128 MB heap. */
+    private static String readBody(HttpExchange t) throws IOException {
+        byte[] body = t.getRequestBody().readNBytes(MAX_REQUEST_BODY_BYTES + 1);
+        if (body.length > MAX_REQUEST_BODY_BYTES) {
+            sendError(t, 413, "Request body too large");
+            return null;
+        }
+        return new String(body);
+    }
+
+    static boolean acceptsGzip(String acceptEncoding) {
+        if (acceptEncoding == null) return false;
+        for (String part : acceptEncoding.split(",")) {
+            String[] token = part.trim().split(";\\s*q=", 2);
+            String coding = token[0].trim();
+            if (coding.equalsIgnoreCase("gzip") || coding.equals("*")) {
+                try {
+                    return token.length == 1 || Double.parseDouble(token[1].trim()) > 0;
+                } catch (NumberFormatException e) {
+                    return false;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** Not in the add-on, whose responses stay as they were in 1.82. */
+    private static boolean gzipFor(HttpExchange t) {
+        return HOSTING.profile() != HostingConfig.Profile.ADDON
+                && acceptsGzip(t.getRequestHeaders().getFirst("Accept-Encoding"));
     }
 
     private static void sendJson(HttpExchange t, String json) throws IOException {
@@ -726,8 +774,20 @@ public class HumidityMonitor {
                     t.getResponseHeaders().add("Content-Type", "text/css");
                 }
                 
+                boolean gzip = gzipFor(t);
+                if (HOSTING.profile() != HostingConfig.Profile.ADDON) {
+                    // Not in the add-on: Home Assistant shows the dashboard in an iframe through ingress.
+                    t.getResponseHeaders().add("X-Frame-Options", "DENY");
+                    t.getResponseHeaders().add("Content-Security-Policy", "frame-ancestors 'none'");
+                    t.getResponseHeaders().add("X-Content-Type-Options", "nosniff");
+                }
+                if (gzip) {
+                    t.getResponseHeaders().add("Content-Encoding", "gzip");
+                    t.getResponseHeaders().add("Vary", "Accept-Encoding");
+                }
                 t.sendResponseHeaders(200, 0);
-                try (OutputStream os = t.getResponseBody()) {
+                try (is; OutputStream raw = t.getResponseBody();
+                     OutputStream os = gzip ? new java.util.zip.GZIPOutputStream(raw) : raw) {
                     byte[] buffer = new byte[1024];
                     int count;
                     while ((count = is.read(buffer)) != -1) {
@@ -758,6 +818,7 @@ public class HumidityMonitor {
             int bucketSeconds = historyBucketSeconds(range);
             
             StringBuilder json = new StringBuilder("[");
+            java.io.OutputStream out = null;
             String sql = historyQuery(timeFilter, bucketSeconds);
 
             try (Connection conn = DriverManager.getConnection(DB_URL);
@@ -796,17 +857,43 @@ public class HumidityMonitor {
                         nullableJsonNumber(rs, "moisture", 3), rs.getBoolean("control_event"),
                         rs.getBoolean("gap_before")
                     ));
+                    if (json.length() >= 64 * 1024) {
+                        out = flushChunk(t, out, json);
+                    }
                 }
+                json.append("]");
+                out = flushChunk(t, out, json);
+                out.close();
                 }
 
             } catch (Exception e) {
                 System.err.println("[HistoryApiHandler] Database error: " + e.getMessage());
-                sendError(t, 503, "History unavailable");
-                return;
+                if (out == null) {
+                    sendError(t, 503, "History unavailable");
+                } else {
+                    // Part of the body is already out; closing the connection is the only honest signal left.
+                    t.close();
+                }
             }
+        }
 
-            json.append("]");
-            sendJson(t, json.toString());
+        /** Sends what is buffered; the first call writes the headers. A month with an event on every sample is ~22 MB. */
+        static java.io.OutputStream flushChunk(HttpExchange t, java.io.OutputStream out, StringBuilder json)
+                throws IOException {
+            if (out == null) {
+                if (gzipFor(t)) {
+                    t.getResponseHeaders().add("Content-Encoding", "gzip");
+                    t.getResponseHeaders().add("Vary", "Accept-Encoding");
+                    t.sendResponseHeaders(200, 0);
+                    out = new java.util.zip.GZIPOutputStream(t.getResponseBody(), 8192);
+                } else {
+                    t.sendResponseHeaders(200, 0);
+                    out = t.getResponseBody();
+                }
+            }
+            out.write(json.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            json.setLength(0);
+            return out;
         }
 
         static String historyTimeFilter(String range) {
@@ -1004,6 +1091,10 @@ public class HumidityMonitor {
         HistoricalBaselines baselines = loadHistoricalBaselines(Instant.now());
         PollResult result;
         synchronized (clientLock) {
+            // A poll that waited behind a handler would otherwise reconnect and write the fan after SIGTERM.
+            if (shuttingDown.get()) {
+                return;
+            }
             result = pollWithFreshConnection(baselines);
         }
         if (result == null) {
@@ -2077,6 +2168,12 @@ public class HumidityMonitor {
                     sendError(t, 409, "A restart is already in progress");
                     return;
                 }
+                // Claim first, then look: shutdown() sets its flag before it reads restartInProgress.
+                if (shuttingDown.get()) {
+                    restartInProgress.set(false);
+                    sendError(t, 503, "Shutting down");
+                    return;
+                }
             }
             
             log("Received SYSTEM RESTART command.");
@@ -2126,14 +2223,7 @@ public class HumidityMonitor {
         log("Shutdown requested.");
         shutdownSignal.countDown();
 
-        HttpServer server = webServer;
-        if (server != null) {
-            server.stop(0);
-        }
-        ExecutorService pool = httpExecutor;
-        if (pool != null) {
-            pool.shutdown();
-        }
+        // The listener stays up until the end so /healthz keeps answering 503; state-changing handlers refuse.
         scheduler.shutdown();
         homeAssistantPublisher.shutdown();
 
@@ -2158,6 +2248,14 @@ public class HumidityMonitor {
             }
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
+        }
+        HttpServer server = webServer;
+        if (server != null) {
+            server.stop(0);
+        }
+        ExecutorService pool = httpExecutor;
+        if (pool != null) {
+            pool.shutdown();
         }
         saveControlStateWithin(Math.max(1, remainingMillis(deadline)));
         log("Shutdown complete.");
@@ -2187,10 +2285,9 @@ public class HumidityMonitor {
         public void handle(HttpExchange t) throws IOException {
             if (t.getRequestMethod().equalsIgnoreCase("POST")) {
                  try {
-                     java.io.InputStream is = t.getRequestBody();
-                     String body = new String(is.readAllBytes());
-                     log("System Mode Request: " + body);
-                     
+                     String body = readBody(t);
+                     if (body == null) return;
+                     // The body is not logged: a newline in it would forge log lines.
                      String val = getJsonValue(body, "monitor_only", null);
                      if (val != null && (val.equalsIgnoreCase("true") || val.equalsIgnoreCase("false"))) {
                         boolean requestedMonitorOnly = Boolean.parseBoolean(val);
@@ -2398,8 +2495,8 @@ public class HumidityMonitor {
                 return;
             }
 
-            java.io.InputStream is = t.getRequestBody();
-            String payload = new String(is.readAllBytes());
+            String payload = readBody(t);
+            if (payload == null) return;
 
             int level = NORMAL_SPEED;
             int durationMinutes = 30;
@@ -2424,8 +2521,13 @@ public class HumidityMonitor {
                 return;
             }
 
+            long until;
             try {
                 synchronized (clientLock) {
+                    if (shuttingDown.get()) {
+                        sendError(t, 503, "Shutting down");
+                        return;
+                    }
                     if (restartInProgress.get()) {
                         sendError(t, 409, "Fan control is unavailable during a restart");
                         return;
@@ -2437,7 +2539,7 @@ public class HumidityMonitor {
                     setFanSpeedImmediately(level);
                     manualOverrideActive = true;
                     manualOverrideSpeed = level;
-                    manualOverrideEndTime = System.currentTimeMillis() + (durationMinutes * 60L * 1000L);
+                    until = manualOverrideEndTime = System.currentTimeMillis() + (durationMinutes * 60L * 1000L);
                     commandedFanSpeed = level;
                 }
             } catch (Exception e) {
@@ -2446,7 +2548,7 @@ public class HumidityMonitor {
                 return;
             }
 
-            String json = String.format("{\"ok\":true,\"level\":%d,\"minutes\":%d,\"until\":%d}", level, durationMinutes, manualOverrideEndTime);
+            String json = String.format("{\"ok\":true,\"level\":%d,\"minutes\":%d,\"until\":%d}", level, durationMinutes, until);
             sendJson(t, json);
         }
     }
@@ -2455,8 +2557,8 @@ public class HumidityMonitor {
         @Override
         public void handle(HttpExchange t) throws IOException {
             if (t.getRequestMethod().equalsIgnoreCase("POST")) {
-                java.io.InputStream is = t.getRequestBody();
-                String payload = new String(is.readAllBytes());
+                String payload = readBody(t);
+                if (payload == null) return;
                 
                 String enabledStr = getJsonValue(payload, "enabled", null);
                 String speedStr = getJsonValue(payload, "speed", null);
@@ -2483,6 +2585,10 @@ public class HumidityMonitor {
                 
                 try {
                     synchronized (clientLock) {
+                        if (shuttingDown.get()) {
+                            sendError(t, 503, "Shutting down");
+                            return;
+                        }
                         if (restartInProgress.get()) {
                             sendError(t, 409, "Fan control is unavailable during a restart");
                             return;
@@ -2523,6 +2629,7 @@ public class HumidityMonitor {
     private boolean saveToDatabase(PollResult result) {
         try (Connection conn = DriverManager.getConnection(DB_URL)) {
             insertReading(conn, result);
+            databaseStartFailed = false;
             
             if (dbErrorCount > 0) {
                 log("Database connection restored.");
