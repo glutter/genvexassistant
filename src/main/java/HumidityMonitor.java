@@ -24,18 +24,17 @@ import java.util.concurrent.atomic.AtomicReference;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpExchange;
-import java.net.InetSocketAddress;
 import java.net.HttpURLConnection;
 import java.net.URL;
 
 public class HumidityMonitor {
 
-    // Database Configuration (SQLite)
-    // Use /data/genvex.db if running in Home Assistant (persistent), otherwise local file
-    private static final String DB_PATH = System.getenv().containsKey("SUPERVISOR_TOKEN") ? "/data/genvex.db" : "genvex.db";
+    // Hosting (add-on, native systemd or local) decides the database path, web bind and Home Assistant access.
+    // An invalid value fails class initialisation, which stops the JVM before anything is started.
+    private static final HostingConfig HOSTING = HostingConfig.fromEnvironment(System.getenv());
+    private static final String DB_PATH = HOSTING.dbPath();
     private static final String DB_URL = "jdbc:sqlite:" + DB_PATH;
-    
-    private static final int WEB_PORT = 8081; // Different from GenvexServer 8080
+
     private static final int MAX_MANUAL_OVERRIDE_MINUTES = 24 * 60;
 
     private final GenvexClient client;
@@ -177,6 +176,8 @@ public class HumidityMonitor {
                 HUMIDITY_HIGH_THRESHOLD);
         validateHeatLossConfiguration(HEAT_LOSS_CONFIG);
 
+        log(HOSTING.describe());
+
         // Initialize Database
         initializeDatabase();
 
@@ -308,6 +309,9 @@ public class HumidityMonitor {
             log("Database initialized at " + DB_PATH);
         } catch (SQLException e) {
             logError("Failed to initialize database: " + e.getMessage());
+            if (HOSTING.stopOnStartupFailure()) {
+                throw new IllegalStateException("Database unavailable at " + DB_PATH, e);
+            }
         }
     }
 
@@ -405,7 +409,7 @@ public class HumidityMonitor {
 
     private void startWebServer() {
         try {
-            HttpServer server = HttpServer.create(new InetSocketAddress(WEB_PORT), 0);
+            HttpServer server = HttpServer.create(HOSTING.webAddress(), 0);
             server.createContext("/", new StaticFileHandler());
             server.createContext("/api/history", new HistoryApiHandler());
             server.createContext("/api/summary", new SummaryApiHandler());
@@ -417,9 +421,13 @@ public class HumidityMonitor {
             server.createContext("/api/system/mode", new SystemModeHandler());
             server.setExecutor(null);
             server.start();
-            log("Web Dashboard started on port " + WEB_PORT);
+            log("Web Dashboard started on port " + HOSTING.webPort());
         } catch (IOException e) {
             logError("Failed to start web server: " + e.getMessage());
+            if (HOSTING.stopOnStartupFailure()) {
+                throw new IllegalStateException("Web server could not bind " + HOSTING.webBind() + ":"
+                        + HOSTING.webPort(), e);
+            }
         }
     }
 
@@ -1223,7 +1231,7 @@ public class HumidityMonitor {
     }
 
     private void publishHomeAssistant(PollResult result) {
-        if (System.getenv("SUPERVISOR_TOKEN") == null) {
+        if (HOSTING.homeAssistant() == null) {
             return;
         }
         pendingHomeAssistantResult.set(result);
@@ -1268,33 +1276,33 @@ public class HumidityMonitor {
 
     private void updateHomeAssistant(int humidity, double tempSupply, double tempOutside, double tempExhaust,
             double tempExtract, int rpm, int speed, int bypassState) {
-        String token = System.getenv("SUPERVISOR_TOKEN");
-        if (token == null) return;
+        HostingConfig.HaEndpoint ha = HOSTING.homeAssistant();
+        if (ha == null) return;
 
-        sendToHA("sensor.genvex_humidity", String.valueOf(humidity), "%", "humidity", token);
-        sendToHA("sensor.genvex_temp_supply", String.format(Locale.ROOT, "%.1f", tempSupply), "°C", "temperature", token);
-        sendTemperatureToHA("sensor.genvex_temp_outside", tempOutside, token);
-        sendTemperatureToHA("sensor.genvex_temp_exhaust", tempExhaust, token);
-        sendTemperatureToHA("sensor.genvex_temp_extract", tempExtract, token);
-        sendToHA("sensor.genvex_fan_rpm", String.valueOf(rpm), "rpm", null, token);
-        sendToHA("sensor.genvex_fan_speed", String.valueOf(speed), null, null, token);
-        sendToHA("sensor.genvex_bypass", bypassStateLabel(bypassState), null, null, token);
+        sendToHA(ha, "sensor.genvex_humidity", String.valueOf(humidity), "%", "humidity");
+        sendToHA(ha, "sensor.genvex_temp_supply", String.format(Locale.ROOT, "%.1f", tempSupply), "°C", "temperature");
+        sendTemperatureToHA(ha, "sensor.genvex_temp_outside", tempOutside);
+        sendTemperatureToHA(ha, "sensor.genvex_temp_exhaust", tempExhaust);
+        sendTemperatureToHA(ha, "sensor.genvex_temp_extract", tempExtract);
+        sendToHA(ha, "sensor.genvex_fan_rpm", String.valueOf(rpm), "rpm", null);
+        sendToHA(ha, "sensor.genvex_fan_speed", String.valueOf(speed), null, null);
+        sendToHA(ha, "sensor.genvex_bypass", bypassStateLabel(bypassState), null, null);
     }
 
-    private void sendTemperatureToHA(String entityId, double temperature, String token) {
+    private void sendTemperatureToHA(HostingConfig.HaEndpoint ha, String entityId, double temperature) {
         if (Double.isFinite(temperature)) {
-            sendToHA(entityId, String.format(Locale.ROOT, "%.1f", temperature), "°C", "temperature", token);
+            sendToHA(ha, entityId, String.format(Locale.ROOT, "%.1f", temperature), "°C", "temperature");
         }
     }
 
-    private void sendToHA(String entityId, String state, String unit, String deviceClass, String token) {
+    private void sendToHA(HostingConfig.HaEndpoint ha, String entityId, String state, String unit, String deviceClass) {
         try {
-            URL url = new URL("http://supervisor/core/api/states/" + entityId);
+            URL url = new URL(ha.baseUrl() + "/api/states/" + entityId);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setConnectTimeout(3000);
             conn.setReadTimeout(3000);
             conn.setRequestMethod("POST");
-            conn.setRequestProperty("Authorization", "Bearer " + token);
+            conn.setRequestProperty("Authorization", "Bearer " + ha.token());
             conn.setRequestProperty("Content-Type", "application/json");
             conn.setDoOutput(true);
 
@@ -1891,19 +1899,19 @@ public class HumidityMonitor {
     }
 
     private void refreshSunStateIfNeeded() {
-        String token = System.getenv("SUPERVISOR_TOKEN");
+        HostingConfig.HaEndpoint ha = HOSTING.homeAssistant();
         long currentTime = System.currentTimeMillis();
-        if (token == null || currentTime - lastSunStateCheck < SUN_STATE_CACHE_MS) {
+        if (ha == null || currentTime - lastSunStateCheck < SUN_STATE_CACHE_MS) {
             return;
         }
 
         lastSunStateCheck = currentTime;
         try {
-            URL url = new URL("http://supervisor/core/api/states/sun.sun");
+            URL url = new URL(ha.baseUrl() + "/api/states/sun.sun");
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setConnectTimeout(3000);
             conn.setReadTimeout(3000);
-            conn.setRequestProperty("Authorization", "Bearer " + token);
+            conn.setRequestProperty("Authorization", "Bearer " + ha.token());
             if (conn.getResponseCode() < 400) {
                 String response = new String(conn.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
                 lastSunBelowHorizon = response.matches("(?s).*\\\"state\\\"\\s*:\\s*\\\"below_horizon\\\".*");
@@ -1917,7 +1925,7 @@ public class HumidityMonitor {
     }
 
     private boolean isAfterSunset(LocalTime now) {
-        if (System.getenv("SUPERVISOR_TOKEN") != null && sunStateAvailable) {
+        if (HOSTING.homeAssistant() != null && sunStateAvailable) {
             return lastSunBelowHorizon;
         }
 
@@ -2449,6 +2457,12 @@ public class HumidityMonitor {
         }
         
         HumidityMonitor monitor = new HumidityMonitor(ip, email);
-        monitor.start();
+        try {
+            monitor.start();
+        } catch (IllegalStateException e) {
+            // Only native hosting throws here; an unattended instance must die rather than run half-started.
+            System.err.println("Fatal: " + e.getMessage());
+            System.exit(1);
+        }
     }
 }
