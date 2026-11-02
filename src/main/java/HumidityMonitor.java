@@ -53,6 +53,11 @@ public class HumidityMonitor {
     private final long startedAtMillis = System.currentTimeMillis();
     private volatile long lastPollAttemptMillis = 0;
     private volatile boolean databaseStartFailed = false;
+    private volatile boolean databaseReady = false;
+    private final AtomicBoolean shuttingDown = new AtomicBoolean();
+    private final java.util.concurrent.CountDownLatch shutdownSignal = new java.util.concurrent.CountDownLatch(1);
+    private volatile HttpServer webServer;
+    private volatile ExecutorService httpExecutor;
 
     // Configuration
     private static final int POLL_INTERVAL = Integer.parseInt(System.getenv().getOrDefault("POLL_INTERVAL", "30"));
@@ -185,6 +190,7 @@ public class HumidityMonitor {
         validateHeatLossConfiguration(HEAT_LOSS_CONFIG);
 
         log(HOSTING.describe() + ", version=" + VERSION);
+        Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown, "shutdown-hook"));
 
         // Initialize Database
         initializeDatabase();
@@ -314,6 +320,7 @@ public class HumidityMonitor {
             ensureControlStateTable(conn);
             restoreControlState(loadControlState(conn));
             saveControlState(conn, controlStateSnapshot());
+            databaseReady = true;
             log("Database initialized at " + DB_PATH);
         } catch (SQLException e) {
             logError("Failed to initialize database: " + e.getMessage());
@@ -430,8 +437,11 @@ public class HumidityMonitor {
             server.createContext("/api/system/mode", new SystemModeHandler());
             server.createContext("/healthz", new HealthApiHandler());
             // A pool, so a handler waiting on clientLock during a device poll cannot starve the others.
-            server.setExecutor(Executors.newFixedThreadPool(HTTP_WORKER_THREADS, daemonThreads("http-worker")));
+            ExecutorService pool = Executors.newFixedThreadPool(HTTP_WORKER_THREADS, daemonThreads("http-worker"));
+            server.setExecutor(pool);
             server.start();
+            webServer = server;
+            httpExecutor = pool;
             log("Web Dashboard started on port " + HOSTING.webPort());
         } catch (IOException e) {
             logError("Failed to start web server: " + e.getMessage());
@@ -458,8 +468,8 @@ public class HumidityMonitor {
                 hasSample ? now - telemetry.sampledAt().toEpochMilli() : 0, hasSample,
                 staleAfterSeconds(POLL_INTERVAL) * 1000L);
         return HealthReport.evaluate(now, startedAtMillis, lastPollAttemptMillis,
-                HealthReport.maxPollAgeMillis(POLL_INTERVAL), databaseStartFailed, dbErrorCount, false, device,
-                VERSION, HOSTING.profile().label());
+                HealthReport.maxPollAgeMillis(POLL_INTERVAL), databaseStartFailed, dbErrorCount, shuttingDown.get(),
+                device, VERSION, HOSTING.profile().label());
     }
 
     class HealthApiHandler implements HttpHandler {
@@ -1328,7 +1338,7 @@ public class HumidityMonitor {
         }
     }
 
-    private void setFanSpeedImmediately(int speed) throws IOException, InterruptedException {
+    void setFanSpeedImmediately(int speed) throws IOException, InterruptedException {
         synchronized (clientLock) {
             client.disconnect();
             try {
@@ -2031,23 +2041,104 @@ public class HumidityMonitor {
             
             log("Received SYSTEM RESTART command.");
             
-            new Thread(() -> {
-                try {
-                    log("Restart sequence: Setting fan to 0...");
-                    setFanSpeedImmediately(0);
-                    Thread.sleep(5000);
-                    log("Restart sequence: Setting fan to 1...");
-                    setFanSpeedImmediately(1);
-                    Thread.sleep(5000);
-                    log("Restart sequence complete.");
-                } catch (Exception e) {
-                    logError("Restart sequence failed: " + e.getMessage());
-                } finally {
-                    restartInProgress.set(false);
-                }
-            }).start();
+            new Thread(HumidityMonitor.this::runRestartSequence).start();
             
             sendJson(t, "{\"status\": \"ok\", \"message\": \"Restart sequence initiated\"}");
+        }
+    }
+
+    /** Ends at speed 1 even when SIGTERM arrives mid-sequence: the pauses are cut short, the second write is not. */
+    void runRestartSequence() {
+        try {
+            log("Restart sequence: Setting fan to 0...");
+            setFanSpeedImmediately(0);
+            pauseUnlessShuttingDown(5000);
+            log("Restart sequence: Setting fan to 1...");
+            setFanSpeedImmediately(1);
+            pauseUnlessShuttingDown(5000);
+            log("Restart sequence complete.");
+        } catch (Exception e) {
+            logError("Restart sequence failed: " + e.getMessage());
+        } finally {
+            restartInProgress.set(false);
+        }
+    }
+
+    private void pauseUnlessShuttingDown(long millis) throws InterruptedException {
+        shutdownSignal.await(millis, TimeUnit.MILLISECONDS);
+    }
+
+    static final long SHUTDOWN_BUDGET_MILLIS = 8_000;
+
+    void shutdown() {
+        shutdown(SHUTDOWN_BUDGET_MILLIS);
+    }
+
+    /**
+     * Order matters: health goes 503 first so a deploy check sees it, then intake stops, then a running restart
+     * sequence is given time to leave the fan on speed 1. Nothing here writes a new speed to the unit.
+     */
+    void shutdown(long budgetMillis) {
+        if (!shuttingDown.compareAndSet(false, true)) {
+            return;
+        }
+        long deadline = System.nanoTime() + budgetMillis * 1_000_000L;
+        log("Shutdown requested.");
+        shutdownSignal.countDown();
+
+        HttpServer server = webServer;
+        if (server != null) {
+            server.stop(0);
+        }
+        ExecutorService pool = httpExecutor;
+        if (pool != null) {
+            pool.shutdown();
+        }
+        scheduler.shutdown();
+        homeAssistantPublisher.shutdown();
+
+        while (restartInProgress.get() && System.nanoTime() < deadline) {
+            try {
+                Thread.sleep(25);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        if (restartInProgress.get()) {
+            logError("Restart sequence still running at shutdown; the fan may be left below speed 1.");
+        }
+
+        // Closing the socket first unblocks a poll that is waiting on the unit, so it can release clientLock.
+        client.disconnect();
+        try {
+            if (!scheduler.awaitTermination(Math.max(0, Math.min(2_000, remainingMillis(deadline))),
+                    TimeUnit.MILLISECONDS)) {
+                scheduler.shutdownNow();
+            }
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        }
+        saveControlStateWithin(Math.max(1, remainingMillis(deadline)));
+        log("Shutdown complete.");
+    }
+
+    private static long remainingMillis(long deadlineNanos) {
+        return (deadlineNanos - System.nanoTime()) / 1_000_000L;
+    }
+
+    /** On its own thread: controlStateSnapshot() needs clientLock, which a stuck handler could still hold. */
+    private void saveControlStateWithin(long millis) {
+        if (!databaseReady) {
+            return;
+        }
+        Thread saver = new Thread(() -> persistControlState(controlStateSnapshot()), "shutdown-save");
+        saver.setDaemon(true);
+        saver.start();
+        try {
+            saver.join(millis);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
         }
     }
 
