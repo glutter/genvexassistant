@@ -172,7 +172,7 @@ public class HumidityMonitor {
     private int eveningCoolingSpeed = 0;
     private HeatLossGuardPolicy.HeatLossState heatLossState = HeatLossGuardPolicy.HeatLossState.IDLE;
     private final MoistureAverage heatLossMoistureAverage = new MoistureAverage(
-            HEAT_LOSS_AVERAGE_WINDOW_MS, POLL_INTERVAL * 2_500L, 3);
+            HEAT_LOSS_AVERAGE_WINDOW_MS, 3);
     private double coolingBaselineIndoorTemp = Double.NaN;
     private long coolingBaselineTime = 0;
     private long lastSunStateCheck = 0;
@@ -186,18 +186,19 @@ public class HumidityMonitor {
         this(ip, email, Clock.systemDefaultZone(), HOSTING.location());
     }
 
+    // A sample older than the window drops out, so a gap longer than the window leaves one sample and starts
+    // a fresh average. A shorter gap, such as one failed poll, keeps the average: the journal shows gaps of
+    // 98-105 s while the heat-loss guard was active, and a reset there would wipe a probe in progress.
     static final class MoistureAverage {
         private final long windowMillis;
-        private final long maxGapMillis;
         private final int minimumSamples;
         private final ArrayDeque<MoistureSample> samples = new ArrayDeque<>();
 
-        MoistureAverage(long windowMillis, long maxGapMillis, int minimumSamples) {
-            if (windowMillis <= 0 || maxGapMillis <= 0 || minimumSamples < 1) {
+        MoistureAverage(long windowMillis, int minimumSamples) {
+            if (windowMillis <= 0 || minimumSamples < 1) {
                 throw new IllegalArgumentException("Invalid moisture-average configuration");
             }
             this.windowMillis = windowMillis;
-            this.maxGapMillis = maxGapMillis;
             this.minimumSamples = minimumSamples;
         }
 
@@ -206,8 +207,7 @@ public class HumidityMonitor {
                 reset();
                 return Double.NaN;
             }
-            if (!samples.isEmpty() && (now <= samples.getLast().time()
-                    || now - samples.getLast().time() > maxGapMillis)) {
+            if (!samples.isEmpty() && now <= samples.getLast().time()) {
                 reset();
             }
             samples.addLast(new MoistureSample(now, moisture));

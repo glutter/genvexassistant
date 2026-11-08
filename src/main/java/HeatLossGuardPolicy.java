@@ -164,12 +164,9 @@ final class HeatLossGuardPolicy {
         }
 
         if (!current.probing()) {
-            // 7. Take one speed away when possible and start observing. Once the floor passed a probe,
-            //    keep probing it; otherwise no later stall can make the guard return the withheld speed.
-            if (policyTarget > config.floorSpeed()) {
-                int probeStepDown = policyTarget - current.stepDown() > config.floorSpeed()
-                        ? current.stepDown() + 1 : current.stepDown();
-                return new HeatLossState(probeStepDown, current.peakMoisture(), current.peakTime(),
+            // 7. Take one speed away and start observing. At the floor there is nothing left to take.
+            if (policyTarget - current.stepDown() > config.floorSpeed()) {
+                return new HeatLossState(current.stepDown() + 1, current.peakMoisture(), current.peakTime(),
                         nowMillis, moistureGramsPerKg, false, 0L, policyTarget);
             }
             return new HeatLossState(current.stepDown(), current.peakMoisture(), current.peakTime(),

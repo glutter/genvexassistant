@@ -555,16 +555,17 @@ class HumidityControlPolicyTest {
     }
 
     @Test
-    void heatLossMoistureAverageNeedsThreeSamplesAndRejectsStaleWindows() {
-        HumidityMonitor.MoistureAverage average =
-                new HumidityMonitor.MoistureAverage(180_000L, 75_000L, 3);
+    void heatLossMoistureAverageNeedsThreeSamplesAndSurvivesOnlyGapsShorterThanItsWindow() {
+        HumidityMonitor.MoistureAverage average = new HumidityMonitor.MoistureAverage(180_000L, 3);
 
         assertTrue(Double.isNaN(average.add(1_000L, 10.0)));
         assertTrue(Double.isNaN(average.add(31_000L, 10.3)));
         assertEquals(10.1, average.add(61_000L, 10.0), 0.0001);
 
-        assertTrue(Double.isNaN(average.add(200_000L, 10.2)),
-                "a gap above the allowed poll interval starts a fresh average");
+        assertEquals(10.125, average.add(161_000L, 10.2), 0.0001,
+                "one failed poll must not discard the samples inside the window");
+        assertTrue(Double.isNaN(average.add(400_000L, 10.2)),
+                "a gap longer than the window starts a fresh average");
     }
 
     @Test

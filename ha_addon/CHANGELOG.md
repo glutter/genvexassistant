@@ -2,8 +2,9 @@
 
 ## 1.85
 
-- Average the heat-loss guard's moisture input over the last three minutes. The guard needs at least three valid polls, so one whole-number humidity change cannot decide a probe by itself. After a successful probe at the normal-speed floor, the guard checks that floor again. A later stall gives one speed back. These checks do not change the humidity or mould safety limits.
+- Average the heat-loss guard's moisture input over the last three minutes. The guard needs at least three valid polls, so one whole-number humidity change cannot decide a probe by itself. One failed poll does not restart the average, but a gap longer than three minutes does. These checks do not change the humidity or mould safety limits.
 - Use mixing ratio to choose between full shower boost and gentle recovery when the pre-rise moisture baseline and extract temperature are available. This avoids a temperature change alone keeping full boost active. Restored boosts without a moisture baseline use the existing relative-humidity fallback.
+- The guard does not check `normal_speed` again after a successful probe. A replay of the logged polls showed that such a check adds 113, 117 and 188 minutes at speed 2 or higher in three of the five showers. No fault was seen in those showers. In one shower, humidity stayed about 3 points above the level before the shower for 90 minutes. The guard must save heat in this case.
 - These changes have not been tested with independent bathroom measurements. A replay uses moisture from the old fan speeds and cannot show the physical drying effect.
 
 ## 1.84
