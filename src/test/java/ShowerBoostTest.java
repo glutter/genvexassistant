@@ -30,6 +30,20 @@ class ShowerBoostTest {
     }
 
     @Test
+    void boostStepDownUsesMoistureBaselineAcrossTemperatureChanges() {
+        double baseline = HumidityPhysics.mixingRatioGramsPerKg(55.0, 20.0);
+        double dryAtCoolerTemperature = HumidityPhysics.mixingRatioGramsPerKg(60, 19.0);
+        assertEquals(2, HumidityMonitor.selectHumidityRecoverySpeed(60, 55.0, dryAtCoolerTemperature,
+                baseline, 19.0, POLICY, 0, 3, 3),
+                "cooling must not keep full boost when moisture excess is below the release level");
+
+        double strongRise = HumidityPhysics.mixingRatioGramsPerKg(63, 20.0);
+        assertEquals(3, HumidityMonitor.selectHumidityRecoverySpeed(63, 55.0, strongRise,
+                baseline, 20.0, POLICY, 0, 2, 3),
+                "a new strong moisture rise restores full boost");
+    }
+
+    @Test
     void gentleRecoveryContinuesWhileDryingWithoutReturningToSpeedThree() {
         HumidityMonitor.BoostRecoveryProgress progress = progress();
         int speed = 1;

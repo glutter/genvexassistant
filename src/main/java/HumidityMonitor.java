@@ -79,6 +79,7 @@ public class HumidityMonitor {
     private static final long BOOST_PROGRESS_WINDOW_MS = 30 * 60_000L;
     private static final double BOOST_PROGRESS_G_PER_KG = 0.3;
     private static final int BOOST_PROGRESS_HUMIDITY_POINTS = 2;
+    private static final long HEAT_LOSS_AVERAGE_WINDOW_MS = 3 * 60_000L;
 
     // General Control Configuration
     private static final int HUMIDITY_VERY_HIGH_THRESHOLD = Integer.parseInt(System.getenv().getOrDefault("HUMIDITY_VERY_HIGH_THRESHOLD", "80"));
@@ -170,6 +171,8 @@ public class HumidityMonitor {
     private boolean eveningCoolingActive = false;
     private int eveningCoolingSpeed = 0;
     private HeatLossGuardPolicy.HeatLossState heatLossState = HeatLossGuardPolicy.HeatLossState.IDLE;
+    private final MoistureAverage heatLossMoistureAverage = new MoistureAverage(
+            HEAT_LOSS_AVERAGE_WINDOW_MS, POLL_INTERVAL * 2_500L, 3);
     private double coolingBaselineIndoorTemp = Double.NaN;
     private long coolingBaselineTime = 0;
     private long lastSunStateCheck = 0;
@@ -181,6 +184,52 @@ public class HumidityMonitor {
 
     public HumidityMonitor(String ip, String email) {
         this(ip, email, Clock.systemDefaultZone(), HOSTING.location());
+    }
+
+    static final class MoistureAverage {
+        private final long windowMillis;
+        private final long maxGapMillis;
+        private final int minimumSamples;
+        private final ArrayDeque<MoistureSample> samples = new ArrayDeque<>();
+
+        MoistureAverage(long windowMillis, long maxGapMillis, int minimumSamples) {
+            if (windowMillis <= 0 || maxGapMillis <= 0 || minimumSamples < 1) {
+                throw new IllegalArgumentException("Invalid moisture-average configuration");
+            }
+            this.windowMillis = windowMillis;
+            this.maxGapMillis = maxGapMillis;
+            this.minimumSamples = minimumSamples;
+        }
+
+        double add(long now, double moisture) {
+            if (!Double.isFinite(moisture) || moisture < 0) {
+                reset();
+                return Double.NaN;
+            }
+            if (!samples.isEmpty() && (now <= samples.getLast().time()
+                    || now - samples.getLast().time() > maxGapMillis)) {
+                reset();
+            }
+            samples.addLast(new MoistureSample(now, moisture));
+            long oldestAccepted = now - windowMillis;
+            while (samples.size() > 1 && samples.getFirst().time() < oldestAccepted) {
+                samples.removeFirst();
+            }
+            if (samples.size() < minimumSamples) {
+                return Double.NaN;
+            }
+            double total = 0;
+            for (MoistureSample sample : samples) {
+                total += sample.moisture();
+            }
+            return total / samples.size();
+        }
+
+        void reset() {
+            samples.clear();
+        }
+
+        private record MoistureSample(long time, double moisture) {}
     }
 
     // The clock and location are injectable so tests can pin the time of day and the sun.
@@ -1581,8 +1630,10 @@ public class HumidityMonitor {
             reason = "Static speed";
         } else if (boostActive) {
             coolingSpeed = selectEveningCoolingSpeed(tempSupply, tempOutside, tempExtract, bypassState, now);
-            int recoverySpeed = selectHumidityRecoverySpeed(humidity, boostBaselineHumidity, HUMIDITY_POLICY, 0,
-                    policyTargetSpeed, HUMIDITY_HYSTERESIS);
+            double moisture = HumidityPhysics.mixingRatioGramsPerKg(humidity, tempExtract);
+            int recoverySpeed = selectHumidityRecoverySpeed(humidity, boostBaselineHumidity, moisture,
+                    boostBaselineMoisture, tempExtract, HUMIDITY_POLICY, 0, policyTargetSpeed,
+                    HUMIDITY_HYSTERESIS);
             targetSpeed = Math.max(recoverySpeed, coolingSpeed);
             int effectiveVeryHigh = effectiveThreshold(HUMIDITY_VERY_HIGH_THRESHOLD, HUMIDITY_HYSTERESIS,
                     policyTargetSpeed >= Math.max(3, NORMAL_SPEED));
@@ -1616,18 +1667,32 @@ public class HumidityMonitor {
         // hysteresis latch for the next poll; the guard's own reduced write must never take its place.
         int policyTarget = targetSpeed;
         policyTargetSpeed = automaticControl ? policyTarget : commandedFanSpeed;
+        if (!automaticControl) {
+            heatLossMoistureAverage.reset();
+        }
         if (automaticControl) {
             double moisture = HumidityPhysics.mixingRatioGramsPerKg(humidity, tempExtract);
+            boolean guardCanRun = HeatLossGuardPolicy.isArmed(tempExtract, tempOutside, HEAT_LOSS_CONFIG)
+                    && humidity < HEAT_LOSS_CONFIG.overrideHumidityPct()
+                    && policyTarget > HEAT_LOSS_CONFIG.floorSpeed();
+            double averagedMoisture;
+            if (guardCanRun) {
+                averagedMoisture = heatLossMoistureAverage.add(nowMillis, moisture);
+            } else {
+                heatLossMoistureAverage.reset();
+                averagedMoisture = Double.NaN;
+            }
             HeatLossGuardPolicy.HeatLossState previousHeatLossState = heatLossState;
             heatLossState = HeatLossGuardPolicy.evaluate(previousHeatLossState, policyTarget, humidity,
-                    moisture, tempExtract, tempOutside, nowMillis, HEAT_LOSS_CONFIG);
+                    averagedMoisture, tempExtract, tempOutside, nowMillis, HEAT_LOSS_CONFIG);
             int guardedSpeed = HeatLossGuardPolicy.guardedSpeed(policyTarget, coolingSpeed, heatLossState,
                     HEAT_LOSS_CONFIG);
             if (guardedSpeed < targetSpeed) {
                 targetSpeed = guardedSpeed;
                 reason += " + Heat-loss guard";
             }
-            logHeatLossTransition(previousHeatLossState, heatLossState, moisture, tempExtract, tempOutside,
+            logHeatLossTransition(previousHeatLossState, heatLossState, averagedMoisture,
+                    tempExtract, tempOutside,
                     nowMillis);
         } else {
             heatLossState = HeatLossGuardPolicy.HeatLossState.IDLE;
@@ -1835,16 +1900,27 @@ public class HumidityMonitor {
     record HumidityPolicy(int riseThreshold, int recoveryTolerance, int boostSpeed,
             int normalSpeed, int lowThreshold, int highThreshold, int veryHighThreshold) {}
 
-        static int selectHumidityRecoverySpeed(int humidity, double baselineHumidity, HumidityPolicy policy,
+    static int selectHumidityRecoverySpeed(int humidity, double baselineHumidity, HumidityPolicy policy,
             int coolingSpeed, int currentSpeed, int hysteresis) {
+        return selectHumidityRecoverySpeed(humidity, baselineHumidity, Double.NaN, Double.NaN, Double.NaN,
+                policy, coolingSpeed, currentSpeed, hysteresis);
+    }
+
+    static int selectHumidityRecoverySpeed(int humidity, double baselineHumidity, double moisture,
+            double baselineMoisture, double tempExtract, HumidityPolicy policy, int coolingSpeed,
+            int currentSpeed, int hysteresis) {
         int boostSpeed = Math.max(policy.normalSpeed(), policy.boostSpeed());
         int gentleSpeed = Math.max(policy.normalSpeed(), Math.min(2, policy.boostSpeed()));
         int strongRiseThreshold = Math.max(8, policy.riseThreshold() * 2);
         int effectiveStrongRise = effectiveThreshold(strongRiseThreshold,
             Math.min(hysteresis, strongRiseThreshold - policy.riseThreshold()),
             currentSpeed >= boostSpeed && boostSpeed > gentleSpeed);
-        int recoverySpeed = !Double.isFinite(baselineHumidity)
-            || humidity - baselineHumidity >= effectiveStrongRise ? boostSpeed : gentleSpeed;
+        double strongRiseMoisture = moistureRiseThreshold(baselineHumidity, effectiveStrongRise, tempExtract);
+        boolean strongRise = Double.isFinite(moisture) && Double.isFinite(baselineMoisture)
+                && Double.isFinite(strongRiseMoisture)
+            ? moisture - baselineMoisture >= strongRiseMoisture
+            : !Double.isFinite(baselineHumidity) || humidity - baselineHumidity >= effectiveStrongRise;
+        int recoverySpeed = strongRise ? boostSpeed : gentleSpeed;
         int veryHighSpeed = Math.max(3, policy.normalSpeed());
         int absoluteHumiditySpeed = humidity >= effectiveThreshold(policy.veryHighThreshold(),
                 hysteresis, currentSpeed >= veryHighSpeed)
@@ -1852,6 +1928,16 @@ public class HumidityMonitor {
             : selectHumiditySpeed(humidity, policy.lowThreshold(), policy.highThreshold(),
                 policy.normalSpeed(), currentSpeed, hysteresis);
         return Math.max(coolingSpeed, Math.max(recoverySpeed, absoluteHumiditySpeed));
+    }
+
+    private static double moistureRiseThreshold(double baselineHumidity, int risePoints, double tempExtract) {
+        double thresholdHumidity = baselineHumidity + risePoints;
+        if (!Double.isFinite(baselineHumidity) || thresholdHumidity > 100.0) {
+            return Double.NaN;
+        }
+        double baseline = HumidityPhysics.mixingRatioGramsPerKg(baselineHumidity, tempExtract);
+        double threshold = HumidityPhysics.mixingRatioGramsPerKg(thresholdHumidity, tempExtract);
+        return Double.isFinite(baseline) && Double.isFinite(threshold) ? threshold - baseline : Double.NaN;
     }
 
     static boolean hasHumidityRise(int humidity, double baselineHumidity, HumidityPolicy policy) {
@@ -2082,6 +2168,7 @@ public class HumidityMonitor {
      */
     private void resetHeatLossGuard() {
         heatLossState = HeatLossGuardPolicy.HeatLossState.IDLE;
+        heatLossMoistureAverage.reset();
         policyTargetSpeed = commandedFanSpeed;
     }
 

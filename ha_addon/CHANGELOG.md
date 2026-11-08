@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.85
+
+- Average the heat-loss guard's moisture input over the last three minutes. The guard needs at least three valid polls, so one whole-number humidity change cannot decide a probe by itself. After a successful probe at the normal-speed floor, the guard checks that floor again. A later stall gives one speed back. These checks do not change the humidity or mould safety limits.
+- Use mixing ratio to choose between full shower boost and gentle recovery when the pre-rise moisture baseline and extract temperature are available. This avoids a temperature change alone keeping full boost active. Restored boosts without a moisture baseline use the existing relative-humidity fallback.
+- These changes have not been tested with independent bathroom measurements. A replay uses moisture from the old fan speeds and cannot show the physical drying effect.
+
 ## 1.84
 
 - Keep the heat-loss guard's hold for at least one probe window (`heat_loss_probe_minutes`). After a stalled probe, the guard gives one speed back and holds it. Before, one sensor count of drying released the hold, but the given-back speed caused that drying. On 4 and 8 November, all four holds ended after 60-169 s, and two of the three probes that followed stalled again. As a result, the fan went back to speed 1 too early after a shower. Now the hold ends only after a full window, and only when the mixing ratio is `heat_loss_progress_g_per_kg` below the level at the stall. A new moisture event and the other release conditions of the guard still end the hold immediately. No settings change.

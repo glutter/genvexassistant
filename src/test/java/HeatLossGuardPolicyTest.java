@@ -153,7 +153,7 @@ class HeatLossGuardPolicyTest {
     }
 
     @Test
-    void aProbeThatKeepsDryingKeepsItsStepAndEarnsAnother() {
+    void aProbeAtFloorKeepsItsStepAndContinuesToMeasure() {
         HeatLossGuardPolicy.HeatLossState state = firstProbe(10.43, 10.43, 3);
 
         state = step(state, 3, 68, 10.20, T0 + 2 * PROBE);
@@ -172,7 +172,7 @@ class HeatLossGuardPolicyTest {
 
         state = step(state, 3, 67, 10.00, T0 + 3 * PROBE + 2 * POLL);
         assertEquals(2, state.stepDown(), "there is nothing left to take");
-        assertFalse(state.probing());
+        assertTrue(state.probing(), "the floor still needs a probe");
         assertEquals(1, HeatLossGuardPolicy.guardedSpeed(3, 0, state, CONFIG));
     }
 
@@ -261,6 +261,25 @@ class HeatLossGuardPolicyTest {
         // back. The guard only keeps what it can show is working.
         state = step(state, 2, 69, STEADY_69, T0 + 2 * PROBE);
         assertEquals(0, state.stepDown());
+        assertTrue(state.holding());
+        assertEquals(2, HeatLossGuardPolicy.guardedSpeed(2, 0, state, CONFIG));
+    }
+
+    @Test
+    void aPassedFloorProbeIsRepeatedUntilMoistureStalls() {
+        HeatLossGuardPolicy.HeatLossState state = firstProbe(10.43, 10.43, 2);
+        state = step(state, 2, 68, 10.20, T0 + 2 * PROBE);
+        assertEquals(1, state.stepDown());
+        assertFalse(state.probing());
+        assertFalse(state.holding());
+
+        state = step(state, 2, 68, 10.19, T0 + 2 * PROBE + POLL);
+        assertEquals(1, state.stepDown(), "the floor stays in place during its next probe");
+        assertTrue(state.probing());
+        assertEquals(1, HeatLossGuardPolicy.guardedSpeed(2, 0, state, CONFIG));
+
+        state = step(state, 2, 68, 10.19, T0 + 3 * PROBE + POLL);
+        assertEquals(0, state.stepDown(), "a stall at the floor gives one speed back");
         assertTrue(state.holding());
         assertEquals(2, HeatLossGuardPolicy.guardedSpeed(2, 0, state, CONFIG));
     }

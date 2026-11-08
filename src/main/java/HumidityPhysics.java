@@ -41,7 +41,11 @@ final class HumidityPhysics {
      * @return the mixing ratio, or NaN when it cannot be computed, so callers can fall back
      */
     static double mixingRatioGramsPerKg(int relativeHumidityPct, double tempC) {
-        if (relativeHumidityPct < 0 || relativeHumidityPct > 100) {
+        return mixingRatioGramsPerKg((double) relativeHumidityPct, tempC);
+    }
+
+    static double mixingRatioGramsPerKg(double relativeHumidityPct, double tempC) {
+        if (!Double.isFinite(relativeHumidityPct) || relativeHumidityPct < 0 || relativeHumidityPct > 100) {
             return Double.NaN;
         }
         double saturationPressure = saturationVapourPressurePa(tempC);
