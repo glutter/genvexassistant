@@ -52,14 +52,18 @@ final class HeatLossGuardPolicy {
      *                         event at all - ever start probing
      * @param probeStartTime   when the current probe began, or {@link #NOT_PROBING}
      * @param referenceMoisture the mixing ratio the current probe or hold is measured against
-     * @param holding          a probe stalled, so no further step-downs until moisture falls unaided
+     * @param holding          a probe stalled and one speed was given back, so no further step-downs until
+     *                         the hold is released
+     * @param holdStartTime    when the current hold began, or 0 when there is no hold. The hold lasts at
+     *                         least one probe window, because a fall right after a stall comes from the speed
+     *                         the hold gave back and says nothing about the lower speed
      * @param lastPolicyTarget the target seen at the previous evaluation - a comparison point, not a
      *                         high-water mark, so a policy that asks for more air is recognised as a new event
      */
     record HeatLossState(int stepDown, double peakMoisture, long peakTime, long probeStartTime,
-            double referenceMoisture, boolean holding, int lastPolicyTarget) {
+            double referenceMoisture, boolean holding, long holdStartTime, int lastPolicyTarget) {
         static final HeatLossState IDLE =
-                new HeatLossState(0, Double.NaN, 0L, NOT_PROBING, Double.NaN, false, 0);
+                new HeatLossState(0, Double.NaN, 0L, NOT_PROBING, Double.NaN, false, 0L, 0);
 
         boolean probing() {
             return probeStartTime != NOT_PROBING;
@@ -124,7 +128,7 @@ final class HeatLossGuardPolicy {
                 || moistureGramsPerKg > current.peakMoisture()
                 || moistureGramsPerKg >= current.referenceMoisture() + config.peakMarginGramsPerKg()) {
             return new HeatLossState(0, moistureGramsPerKg, nowMillis, NOT_PROBING,
-                    moistureGramsPerKg, false, policyTarget);
+                    moistureGramsPerKg, false, 0L, policyTarget);
         }
 
         // 4. Moisture is still at its recent peak, so the event is still running: hold the current step, and
@@ -140,34 +144,39 @@ final class HeatLossGuardPolicy {
         boolean peakIsFresh = nowMillis - current.peakTime() < config.probeWindowMillis();
         if (peakIsFresh && moistureGramsPerKg >= current.peakMoisture() - config.peakMarginGramsPerKg()) {
             return new HeatLossState(current.stepDown(), current.peakMoisture(), current.peakTime(),
-                    current.probeStartTime(), current.referenceMoisture(), current.holding(), policyTarget);
+                    current.probeStartTime(), current.referenceMoisture(), current.holding(),
+                    current.holdStartTime(), policyTarget);
         }
 
         if (current.holding()) {
-            // 5. Moisture fell further without extra ventilation, so the hold has earned its release.
-            if (moistureGramsPerKg <= current.referenceMoisture() - config.progressGramsPerKg()) {
+            // 5. Release the hold only after a full probe window at the speed it gave back, and only if
+            //    moisture fell by the progress threshold. Without the window, one sensor count of drying -
+            //    which the given-back speed causes within a minute or two - released the hold, and the next
+            //    probe started from almost the same moisture as the probe that had just stalled.
+            if (nowMillis - current.holdStartTime() >= config.probeWindowMillis()
+                    && moistureGramsPerKg <= current.referenceMoisture() - config.progressGramsPerKg()) {
                 return new HeatLossState(current.stepDown(), current.peakMoisture(), current.peakTime(),
-                        NOT_PROBING, moistureGramsPerKg, false, policyTarget);
+                        NOT_PROBING, moistureGramsPerKg, false, 0L, policyTarget);
             }
-            // 6. Still stalled.
+            // 6. Still held.
             return new HeatLossState(current.stepDown(), current.peakMoisture(), current.peakTime(),
-                    NOT_PROBING, current.referenceMoisture(), true, policyTarget);
+                    NOT_PROBING, current.referenceMoisture(), true, current.holdStartTime(), policyTarget);
         }
 
         if (!current.probing()) {
             // 7. Take one speed away and start observing. At the floor there is nothing left to take.
             if (policyTarget - current.stepDown() > config.floorSpeed()) {
                 return new HeatLossState(current.stepDown() + 1, current.peakMoisture(), current.peakTime(),
-                        nowMillis, moistureGramsPerKg, false, policyTarget);
+                        nowMillis, moistureGramsPerKg, false, 0L, policyTarget);
             }
             return new HeatLossState(current.stepDown(), current.peakMoisture(), current.peakTime(),
-                    NOT_PROBING, current.referenceMoisture(), false, policyTarget);
+                    NOT_PROBING, current.referenceMoisture(), false, 0L, policyTarget);
         }
 
         // 8. Observing; the window has not elapsed, so there is nothing to conclude yet.
         if (nowMillis - current.probeStartTime() < config.probeWindowMillis()) {
             return new HeatLossState(current.stepDown(), current.peakMoisture(), current.peakTime(),
-                    current.probeStartTime(), current.referenceMoisture(), false, policyTarget);
+                    current.probeStartTime(), current.referenceMoisture(), false, 0L, policyTarget);
         }
 
         // 9. Score the probe: still drying keeps the step and allows another, a stall gives one speed back
@@ -176,10 +185,10 @@ final class HeatLossGuardPolicy {
                 current.referenceMoisture() - moistureGramsPerKg >= config.progressGramsPerKg();
         if (progressed) {
             return new HeatLossState(current.stepDown(), current.peakMoisture(), current.peakTime(),
-                    NOT_PROBING, moistureGramsPerKg, false, policyTarget);
+                    NOT_PROBING, moistureGramsPerKg, false, 0L, policyTarget);
         }
         return new HeatLossState(Math.max(0, current.stepDown() - 1), current.peakMoisture(),
-                current.peakTime(), NOT_PROBING, moistureGramsPerKg, true, policyTarget);
+                current.peakTime(), NOT_PROBING, moistureGramsPerKg, true, nowMillis, policyTarget);
     }
 
     /**
@@ -202,9 +211,10 @@ final class HeatLossGuardPolicy {
      *   <li>{@code armed} - engaged and watching, but withholding nothing and blocking nothing
      *   <li>{@code step-2} - two speeds withheld, between probes
      *   <li>{@code step-1 probing 4m} - a step-down under observation, four minutes in
-     *   <li>{@code step-0 held} / {@code step-2 held} - stalled, so no further step-downs until moisture
-     *       falls unaided. {@code step-0 held} is reachable: transition 9 can give the last speed back and
-     *       still hold, and the hold is what stops the guard immediately taking that speed again.
+     *   <li>{@code step-0 held} / {@code step-2 held} - stalled, so no further step-downs for at least one
+     *       probe window and until moisture falls. {@code step-0 held} is reachable: transition 9 can give
+     *       the last speed back and still hold, and the hold is what stops the guard immediately taking that
+     *       speed again.
      * </ul>
      *
      * <p>The state is keyed on {@code peakMoisture} rather than on {@code stepDown}, because a step-down of
@@ -261,7 +271,7 @@ final class HeatLossGuardPolicy {
         if (next.holding() && !previous.holding()) {
             return "drying stalled, giving one speed back and holding there";
         }
-        return "hold released, moisture is falling unaided again";
+        return "hold released after a full window, moisture fell at the speed it gave back";
     }
 
     private static boolean isPlausible(double tempC) {

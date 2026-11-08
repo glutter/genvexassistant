@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.84
+
+- Keep the heat-loss guard's hold for at least one probe window (`heat_loss_probe_minutes`). After a stalled probe, the guard gives one speed back and holds it. Before, one sensor count of drying released the hold, but the given-back speed caused that drying. On 4 and 8 November, all four holds ended after 60-169 s, and two of the three probes that followed stalled again. As a result, the fan went back to speed 1 too early after a shower. Now the hold ends only after a full window, and only when the mixing ratio is `heat_loss_progress_g_per_kg` below the level at the stall. A new moisture event and the other release conditions of the guard still end the hold immediately. No settings change.
+- Cost: in cold weather the fan can stay longer at speed 2. A replay of the logged polls from 2 to 8 November shows the cost. The target was speed 2 or higher for 6 more minutes on 4 November and for 41 more minutes on 8 November. The replay uses humidity that was measured at the lower speed, so it cannot show faster drying at speed 2. The existing check for a stalled humidity recovery still applies: if 30 minutes at speed 2 or higher give less than 0.3 g/kg of drying, the recovery stops. The effect on drying time is not measured yet.
+- Change the log line for the end of a hold to "hold released after a full window, moisture fell at the speed it gave back". The old line said that moisture fell "unaided", which was not true.
+
 ## 1.83
 
 - Run outside Home Assistant. A hosting profile (`GENVEX_HOSTING=addon|native|local`, auto-detected from `SUPERVISOR_TOKEN`) selects the database path, web bind address and port, and whether Home Assistant sensors are published. With no new settings the add-on behaves as in 1.82. Native hosting binds `127.0.0.1`, reads `GENVEX_DB_PATH` or `STATE_DIRECTORY`, and exits with code 1 when the web server cannot bind or the database cannot start, instead of running on without them. The profile is logged once at startup. See `native/genvex.env.example` and the README.

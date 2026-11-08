@@ -106,7 +106,7 @@ class HeatLossGuardPolicyTest {
         // The window it kept is scored on its own deadline, and a plateau scores as the stall it is.
         state = step(state, 3, 70, moistureAt(70), T0 + POLL + PROBE);
         assertEquals(0, state.stepDown(), "flat moisture over the whole window gives the speed back");
-        assertTrue(state.holding(), "and holds there until the air dries unaided");
+        assertTrue(state.holding(), "and holds there");
         assertEquals(3, HeatLossGuardPolicy.guardedSpeed(3, 0, state, CONFIG));
     }
 
@@ -196,16 +196,21 @@ class HeatLossGuardPolicyTest {
     }
 
     @Test
-    void aHoldIsReleasedOnlyByMoistureFallingUnaided() {
+    void aHoldIsReleasedOnlyByAFullWindowOfFurtherDrying() {
         HeatLossGuardPolicy.HeatLossState state = firstProbe(10.43, 10.43, 3);
         state = step(state, 3, 69, 10.40, T0 + 2 * PROBE);
         assertTrue(state.holding());
+
+        // Regression, 8 Nov: a stall at 9.57 g/kg was released 60 s later at 9.39. That fall came from the
+        // speed the hold had just given back, and the next probe stalled again.
+        state = step(state, 3, 67, 10.22, T0 + 2 * PROBE + 2 * POLL);
+        assertTrue(state.holding(), "a fall inside the first window does not release the hold");
 
         state = step(state, 3, 68, 10.26, T0 + 3 * PROBE);
         assertTrue(state.holding(), "0.14 g/kg is one hundredth short of the release");
 
         state = step(state, 3, 68, 10.25, T0 + 4 * PROBE);
-        assertFalse(state.holding(), "the house is drying again on its own");
+        assertFalse(state.holding(), "a full window later the house is still drying");
         assertEquals(10.25, state.referenceMoisture());
         assertEquals(0, state.stepDown(), "the release itself takes nothing away");
 
@@ -473,13 +478,13 @@ class HeatLossGuardPolicyTest {
                 step(stalled, 3, 69, STEADY_69, stallTime + POLL), stallTime + POLL),
                 "still stalled is the same state, so no second line");
 
-        // A hold that ends because the air dried by itself - the one case that really is falling unaided.
+        // A hold that ends because the house kept drying for a full window at the speed it gave back.
         long releaseTime = stallTime + PROBE;
         HeatLossGuardPolicy.HeatLossState released =
                 step(stalled, 3, 60, STEADY_69 - 0.2, releaseTime);
         assertFalse(released.holding());
         assertEquals(stalled.stepDown(), released.stepDown(), "the hold lifts without giving speed back");
-        assertEquals("hold released, moisture is falling unaided again",
+        assertEquals("hold released after a full window, moisture fell at the speed it gave back",
                 HeatLossGuardPolicy.describeTransition(stalled, released, releaseTime));
 
         // And a disarm, which is the only transition that hands the fan back for good.
