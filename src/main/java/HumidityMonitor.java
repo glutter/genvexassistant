@@ -157,6 +157,10 @@ public class HumidityMonitor {
     private long lastFanCommandTime = 0;
     private int lastObservedFanSpeed = -1;
     private FanCommandFeedback fanCommandFeedback = new FanCommandFeedback(0, -1);
+    // Written to the database after the poll, outside clientLock. Kept when the database is down, up to a limit.
+    private final java.util.concurrent.ConcurrentLinkedDeque<FanCommandLog.FanCommand> pendingFanCommands =
+            new java.util.concurrent.ConcurrentLinkedDeque<>();
+    private static final int MAX_PENDING_FAN_COMMANDS = 200;
     private boolean setpointReadbackUnavailableLogged = false;
     private boolean setpointReadbackAvailable = false;
     private boolean zeroSetpointReadbackLogged = false;
@@ -382,6 +386,7 @@ public class HumidityMonitor {
             stmt.execute(sql);
             ensureHistoryColumns(conn);
             ensureControlStateTable(conn);
+            FanCommandLog.ensureTable(conn);
             restoreControlState(loadControlState(conn));
             saveControlState(conn, controlStateSnapshot());
             databaseReady = true;
@@ -502,6 +507,7 @@ public class HumidityMonitor {
             addContext(server, "/api/fan/udluftning", new UdluftningApiHandler());
             addContext(server, "/api/fan/udluftning/stop", new StopUdluftningApiHandler());
             addContext(server, "/api/fan/static", new StaticRpmApiHandler());
+            addContext(server, "/api/fan/commands", new FanCommandsApiHandler());
             addContext(server, "/api/system/restart", new RestartApiHandler());
             addContext(server, "/api/system/mode", new SystemModeHandler());
             addContext(server, "/healthz", new HealthApiHandler());
@@ -1155,6 +1161,7 @@ public class HumidityMonitor {
         }
 
         persistControlState(controlStateSnapshot());
+        flushFanCommands();
 
         if (saveToDatabase(result)) {
             log("Logged: Humidity=" + result.humidity() + "%, Temp=" + result.tempSupply() + "C, RPM="
@@ -1745,15 +1752,18 @@ public class HumidityMonitor {
         if (fanStopped) {
             log("Fan duty is 0 (OFF) but target is " + targetSpeed + ". Re-applying setpoint.");
         }
+        boolean written = false;
         try {
             log("Adjusting Fan Speed: " + observedFanSpeed + " -> " + targetSpeed + " (Reason: " + reason
                     + ", attempt " + decision.attempts() + ")");
             client.setFanSpeed(targetSpeed);
             commandedFanSpeed = targetSpeed;
+            written = true;
         } catch (Exception e) {
             logError("Failed to set fan speed: " + e.getMessage());
-            reason += " + Fan command failed";
         } finally {
+            recordFanCommand(new FanCommandLog.FanCommand(nowMillis, observedFanSpeed, targetSpeed, reason, written));
+            if (!written) reason += " + Fan command failed";
             // Record the attempt even when the write failed, so a broken link is paced the same way
             // as a rejected setpoint instead of being retried on every poll.
             lastFanCommandTime = nowMillis;
@@ -2795,8 +2805,68 @@ public class HumidityMonitor {
         return bypassState < 0 ? "unknown" : bypassState == 1 ? "open" : "closed";
     }
 
+    private void recordFanCommand(FanCommandLog.FanCommand command) {
+        pendingFanCommands.addLast(command);
+        while (pendingFanCommands.size() > MAX_PENDING_FAN_COMMANDS) {
+            pendingFanCommands.pollFirst();
+        }
+    }
+
+    private void flushFanCommands() {
+        if (pendingFanCommands.isEmpty()) {
+            return;
+        }
+        try (Connection conn = DriverManager.getConnection(DB_URL)) {
+            FanCommandLog.FanCommand command;
+            while ((command = pendingFanCommands.peekFirst()) != null) {
+                FanCommandLog.insert(conn, command);
+                pendingFanCommands.pollFirst();
+            }
+        } catch (SQLException e) {
+            // saveToDatabase reports the outage. The commands stay queued for the next poll.
+        }
+    }
+
+    class FanCommandsApiHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange t) throws IOException {
+            if (!"/api/fan/commands".equals(t.getRequestURI().getPath())) {
+                sendError(t, 404, "Not Found");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(t.getRequestMethod())) {
+                sendError(t, 405, "Method Not Allowed");
+                return;
+            }
+            long after = 0;
+            String query = t.getRequestURI().getQuery();
+            if (query != null) {
+                for (String part : query.split("&")) {
+                    if (part.startsWith("after=")) {
+                        try {
+                            after = Math.max(0, Long.parseLong(part.substring(6)));
+                        } catch (NumberFormatException e) {
+                            sendError(t, 400, "Invalid after");
+                            return;
+                        }
+                    }
+                }
+            }
+            String json;
+            try (Connection conn = DriverManager.getConnection(DB_URL)) {
+                json = FanCommandLog.json(conn, after);
+            } catch (SQLException e) {
+                sendError(t, 503, "Fan commands unavailable");
+                return;
+            }
+            t.getResponseHeaders().add("Cache-Control", "no-store");
+            sendJson(t, json);
+        }
+    }
+
     private void cleanupOldData() {
         try (Connection conn = DriverManager.getConnection(DB_URL)) {
+            FanCommandLog.deleteExpired(conn, System.currentTimeMillis());
             int deleted = deleteExpiredReadings(conn);
             log("Cleanup: Removed " + deleted + " old records.");
         } catch (SQLException e) {
